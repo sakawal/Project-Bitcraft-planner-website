@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bitcraft Planner</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>The Bitcrafter’s House</h1>
+    <p>A community planner for Bitcraft Online <a href="https://store.steampowered.com/app/3454650/BitCraft_Online/" target="_blank">Steam Page</a>, their official <a href="https://discord.gg/bitcraft">discord</a></p>
+    <nav>
+      <ul>
+        <li data-tab="travelers" class="active">
+          <img src="assets/Trading.png" alt="Travelers" class="nav-icon">
+          Travelers
+        </li>
+        <li data-tab="items">
+          <img src="assets/Book.png" alt="Items" class="nav-icon">
+          Items
+        </li>
+        <li data-tab="craft">
+          <img src="assets/Crafting.png" alt="Craft" class="nav-icon">
+          Craft
+        </li>
+        <li data-tab="inventory">
+          <img src="assets/Other/Vehicles/LargeCart.png" alt="My Inventory" class="nav-icon">
+          My Inventory
+        </li>
+      </ul>
+    </nav>
+    <div class="hamburger-menu" id="hamburger-menu">
+      <div class="bar"></div>
+      <div class="bar"></div>
+      <div class="bar"></div>
+    </div>
+  </header>
+
+  <div id="settings-modal" class="settings-modal">
+    <div class="settings-content">
+      <span class="close-button" id="close-settings-modal">&times;</span>
+      <h2>Settings</h2>
+      <button id="delete-cache-btn" class="delete-cache-btn">Delete Local Storage Cache</button>
+      <div id="settings-message" class="settings-message"></div>
+    </div>
+  </div>
+
+  <main>
+    <div id="global-info-message" class="global-info-message"></div>
+
+    <section id="travelers" class="tab active">
+      <h2>Traveler Quests</h2>
+      <div class="traveler-controls">
+        <div class="player-level-control">
+          <label for="player-level-filter">Player Level:</label>
+          <input id="player-level-filter" type="number" value="1" min="1" />
+        </div>
+        <div id="traveler-filter-buttons" class="traveler-filter-buttons"></div>
+      </div>
+      <div id="travelers-grid" class="travelers-grid"></div>
+    </section>
+
+    <section id="items" class="tab">
+      <h2>All Items</h2>
+      <div class="items-controls">
+        <input type="text" id="items-search" placeholder="Search items..." class="items-search" />
+        <select id="items-tier-filter" class="items-tier-filter">
+          <option value="">All Tiers</option>
+        </select>
+        <select id="items-rarity-filter" class="items-rarity-filter">
+          <option value="">All Rarities</option>
+          <option value="0">None</option>
+          <option value="1">Common</option>
+          <option value="2">Uncommon</option>
+          <option value="3">Rare</option>
+          <option value="4">Epic</option>
+          <option value="5">Legendary</option>
+          <option value="6">Mythic</option>
+        </select>
+        <select id="items-tag-filter" class="items-tag-filter">
+          <option value="">All Tags</option>
+        </select>
+      </div>
+      <div class="pagination">
+        <button id="prev-page">Previous</button>
+        <span id="page-indicator">Page 1</span>
+        <button id="next-page">Next</button>
+      </div>
+      <div id="items-grid" class="items-grid"></div>
+    </section>
+
+    <section id="craft" class="tab">
+      <h2>Crafting Planner</h2>
+      <div class="craft-list-actions">
+        <button id="share-craft-list-btn" class="action-btn share-btn">Share Craft List</button>
+        <button id="clear-craft-list-btn" class="action-btn clear-btn">Clear Craft List</button>
+      </div>
+      <div id="craft-list" class="craft-list"></div>
+      <div class="global-requirements-section">
+        <h3>Required Resources</h3>
+        <p class="section-subtitle">(Resources to collect, not craftable)</p>
+        <div id="global-requirements-list" class="global-requirements-list"></div>
+      </div>
+      <div class="inventory-usage-section">
+        <h3>Items Used from Inventory</h3>
+        <div id="inventory-usage-list" class="inventory-usage-list"></div>
+      </div>
+      <div class="craft-steps-section">
+        <h3>Crafting Steps</h3>
+        <div id="craft-steps-list" class="craft-steps-grid"></div>
+      </div>
+    </section>
+
+    <section id="inventory" class="tab">
+      <div class="inventory-header">
+        <h2>My Inventory</h2>
+        <button id="share-inventory-btn" class="action-btn share-btn">Export Inventory</button>
+        <button id="clear-inventory-btn" class="action-btn clear-btn">Clear Inventory</button>
+      </div>
+      <div id="inventory-list" class="inventory-list"></div>
+    </section>
+
+  </main>
+
+<footer>
+    <p>&copy; Vagabond, 2025. If your coin pouch feels too heavy, lighten it here: <a href="https://yourlink.com" target="_blank">Support the forge</a></p>
+</footer>
+  <script src="main.js"></script>
+</body>
+</html>
