@@ -866,6 +866,50 @@ main {
     padding: 0.6em;
   }
 }
+.site-footer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 20px;
+  text-align: center;
+}
+
+@media (min-width: 600px) {
+  .site-footer {
+    flex-direction: row;
+    justify-content: center;
+  }
+}
+
+.footer-text {
+  margin: 0;
+  font-size: 14px;
+  color: #ccc;
+}
+
+.kofi-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background-color: #ff5f5f;
+  color: white;
+  padding: 8px 14px;
+  border-radius: 8px;
+  text-decoration: none;
+  font-weight: bold;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+  transition: background-color 0.2s ease;
+}
+
+.kofi-button:hover {
+  background-color: #e65353;
+}
+
+.kofi-icon {
+  width: 20px;
+  height: 20px;
+}
 
 /* hide arrow in most navigators used */
 input[type="number"] {
