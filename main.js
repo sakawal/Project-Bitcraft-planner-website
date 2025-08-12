@@ -704,8 +704,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     Object.entries(rawRequirements).forEach(([id, needed])=>{
       const it = craftingData[id]; if (!it) return;
-      const have = inventory[id] || 0;
-      const required = Math.max(0, Math.ceil(needed - have));
+      // rawRequirements already accounts for inventory usage in calculateCraftingRequirements.
+      // Do not subtract inventory again here. Otherwise adding one item would reduce by two.
+      const required = Math.max(0, Math.ceil(needed));
       const statusClass = required === 0 ? 'green' : 'red';
       const card = document.createElement('div');
       card.className = 'requirement-card';
