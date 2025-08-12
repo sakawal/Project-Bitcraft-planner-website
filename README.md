@@ -98,4 +98,4 @@ See the [LICENSE](LICENSE) file for the full text.
 - Over **60% of the code** (especially DOM manipulation) was written with AI assistance.  
 - Still learning JavaScript — some operators like `??` or `||` are still mysterious to me 😅.  
 - Contributions are welcome!  
-- Contact: Discord **lvagabond** (Vaga-Yaga) — friend request required to avoid scams.
+- Contact: Discord **lvagabond** (Vaga-Yaga) — friend request required to avoid scams. ( yes I know, my name on git is sakawal but I am "Vaga - the Rhoa hunter in the mudflats" )
