@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -9,68 +9,97 @@
 <body>
   <header>
     <h1>The Bitcrafter’s House</h1>
-    <p>A community planner for Bitcraft Online <a href="https://store.steampowered.com/app/3454650/BitCraft_Online/" target="_blank">Steam Page</a>, their official <a href="https://discord.gg/bitcraft">discord</a></p>
+    <p>A community planner for Bitcraft Online <a href="https://store.steampowered.com/app/3454650/BitCraft_Online/" target="_blank" rel="noopener">Steam Page</a>, their official <a href="https://discord.gg/bitcraft" target="_blank" rel="noopener">Discord</a></p>
+
     <nav>
       <ul>
         <li data-tab="travelers" class="active">
-          <img src="assets/Trading.png" alt="Travelers" class="nav-icon">
+          <img src="assets/Trading.png" alt="Travelers" class="nav-icon" width="24" height="24" loading="lazy" decoding="async">
           Travelers
         </li>
         <li data-tab="items">
-          <img src="assets/Book.png" alt="Items" class="nav-icon">
+          <img src="assets/Book.png" alt="Items" class="nav-icon" width="24" height="24" loading="lazy" decoding="async">
           Items
         </li>
         <li data-tab="craft">
-          <img src="assets/Crafting.png" alt="Craft" class="nav-icon">
+          <img src="assets/Crafting.png" alt="Craft" class="nav-icon" width="24" height="24" loading="lazy" decoding="async">
           Craft
         </li>
         <li data-tab="inventory">
-          <img src="assets/Other/Vehicles/LargeCart.png" alt="My Inventory" class="nav-icon">
+          <img src="assets/Other/Vehicles/LargeCart.png" alt="My Inventory" class="nav-icon" width="24" height="24" loading="lazy" decoding="async">
           My Inventory
         </li>
       </ul>
     </nav>
-    <div class="hamburger-menu" id="hamburger-menu">
-      <div class="bar"></div>
-      <div class="bar"></div>
-      <div class="bar"></div>
-    </div>
+
+    <!-- Gear button for Settings -->
+    <button id="settings-gear" class="gear-btn" aria-label="Open settings" title="Settings">
+      <!-- simple SVG gear -->
+      <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true">
+        <path fill="currentColor" d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58a.5.5 0 0 0 .12-.65l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.06 7.06 0 0 0-1.63-.94l-.36-2.54A.5.5 0 0 0 13.9 1h-3.8a.5.5 0 0 0-.49.41l-.36 2.54c-.58.23-1.12.54-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L2.7 7.98a.5.5 0 0 0 .12.65l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94l-2.03 1.58a.5.5 0 0 0-.12.65l1.92 3.32c.13.22.39.31.6.22l2.39-.96c.5.4 1.05.72 1.63.94l.36 2.54c.04.24.25.41.49.41h3.8c.24 0 .45-.17.49-.41l.36-2.54c.58-.23 1.12-.54 1.63-.94l2.39.96c.22.09.47 0 .6-.22l1.92-3.32a.5.5 0 0 0-.12-.65l-2.03-1.58ZM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7Z"/>
+      </svg>
+    </button>
   </header>
 
-  <div id="settings-modal" class="settings-modal">
-    <div class="settings-content">
-      <span class="close-button" id="close-settings-modal">&times;</span>
-      <h2>Settings</h2>
-      <button id="delete-cache-btn" class="delete-cache-btn">Delete Local Storage Cache</button>
+  <!-- Settings -->
+  <div id="settings-modal" class="settings-modal" aria-hidden="true">
+    <div class="settings-content" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+      <span class="close-button" id="close-settings-modal" aria-label="Close">&times;</span>
+      <h2 id="settings-title">Settings</h2>
+
+      <div class="setting-row">
+        <label class="switch">
+          <input type="checkbox" id="theme-toggle" />
+          <span class="slider"></span>
+        </label>
+        <div>
+          <div class="setting-title">Theme</div>
+          <div class="setting-sub">Light / Dark</div>
+        </div>
+      </div>
+
+      <div class="setting-row">
+        <button id="delete-cache-btn" class="delete-cache-btn">Delete Local Storage Cache</button>
+      </div>
+
+      <div class="setting-row">
+        <button id="export-localstorage-btn" class="export-btn">Export Local Storage</button>
+        <button id="import-localstorage-btn" class="import-btn">Import Local Storage</button>
+        <input id="import-localstorage-file" type="file" accept=".json,application/json" style="display:none" />
+      </div>
+
       <div id="settings-message" class="settings-message"></div>
     </div>
   </div>
 
   <main>
-    <div id="global-info-message" class="global-info-message"></div>
+    <div id="global-info-message" class="global-info-message" role="status" aria-live="polite"></div>
 
+    <!-- Travelers tab -->
     <section id="travelers" class="tab active">
       <h2>Traveler Quests</h2>
       <div class="traveler-controls">
-        <div class="player-level-control">
-          <label for="player-level-filter">Player Level:</label>
-          <input id="player-level-filter" type="number" value="1" min="1" />
-        </div>
         <div id="traveler-filter-buttons" class="traveler-filter-buttons"></div>
       </div>
       <div id="travelers-grid" class="travelers-grid"></div>
     </section>
 
+    <!-- Items tab -->
     <section id="items" class="tab">
       <h2>All Items</h2>
       <div class="items-controls">
-        <input type="text" id="items-search" placeholder="Search items..." class="items-search" />
-        <select id="items-tier-filter" class="items-tier-filter">
+        <label for="items-search" class="visually-hidden">Search items</label>
+        <input type="text" id="items-search" name="items-search" placeholder="Search items..." class="items-search" aria-label="Search items" />
+
+        <label for="items-tier-filter" class="visually-hidden">Tier filter</label>
+        <select id="items-tier-filter" name="items-tier-filter" class="items-tier-filter" aria-label="Tier filter">
           <option value="">All Tiers</option>
         </select>
-        <select id="items-rarity-filter" class="items-rarity-filter">
+
+        <label for="items-rarity-filter" class="visually-hidden">Rarity filter</label>
+        <select id="items-rarity-filter" name="items-rarity-filter" class="items-rarity-filter" aria-label="Rarity filter">
           <option value="">All Rarities</option>
-          <option value="0">None</option>
+          <option value="0">Unknown</option>
           <option value="1">Common</option>
           <option value="2">Uncommon</option>
           <option value="3">Rare</option>
@@ -78,10 +107,13 @@
           <option value="5">Legendary</option>
           <option value="6">Mythic</option>
         </select>
-        <select id="items-tag-filter" class="items-tag-filter">
+
+        <label for="items-tag-filter" class="visually-hidden">Tag filter</label>
+        <select id="items-tag-filter" name="items-tag-filter" class="items-tag-filter" aria-label="Tag filter">
           <option value="">All Tags</option>
         </select>
       </div>
+      <!-- Pagination Controls -->
       <div class="pagination">
         <button id="prev-page">Previous</button>
         <span id="page-indicator">Page 1</span>
@@ -90,12 +122,25 @@
       <div id="items-grid" class="items-grid"></div>
     </section>
 
+    <!-- Craft tab -->
     <section id="craft" class="tab">
       <h2>Crafting Planner</h2>
+
+      <!-- Plans (save / manage presets) -->
+      <div class="plans-section">
+        <h3>Plans</h3>
+        <div class="plan-create">
+          <input id="plan-name-input" type="text" placeholder="Plan name..." aria-label="Plan name">
+          <button id="save-plan-btn" class="action-btn share-btn">Save Plan</button>
+        </div>
+        <div id="plans-list" class="plans-list"></div>
+      </div>
+
       <div class="craft-list-actions">
         <button id="share-craft-list-btn" class="action-btn share-btn">Share Craft List</button>
         <button id="clear-craft-list-btn" class="action-btn clear-btn">Clear Craft List</button>
       </div>
+
       <div id="craft-list" class="craft-list"></div>
       <div class="global-requirements-section">
         <h3>Required Resources</h3>
@@ -112,25 +157,110 @@
       </div>
     </section>
 
+    <!-- Inventory tab -->
     <section id="inventory" class="tab">
       <div class="inventory-header">
         <h2>My Inventory</h2>
-        <button id="share-inventory-btn" class="action-btn share-btn">Export Inventory</button>
-        <button id="clear-inventory-btn" class="action-btn clear-btn">Clear Inventory</button>
+        <div class="inventory-actions">
+          <button id="share-inventory-btn" class="action-btn share-btn">Share Inventory</button>
+          <button id="clear-inventory-btn" class="action-btn clear-btn">Clear Inventory</button>
+        </div>
+      </div>
+      <!-- Storage plans section for inventory -->
+      <div class="plans-section inventory-plans-section">
+        <h3>Storage Plans</h3>
+        <div class="plan-create">
+          <input id="inv-plan-name-input" type="text" placeholder="Plan name..." aria-label="Plan name">
+          <button id="save-inv-plan-btn" class="action-btn share-btn">Save Plan</button>
+        </div>
+        <div id="inv-plans-list" class="plans-list"></div>
       </div>
       <div id="inventory-list" class="inventory-list"></div>
     </section>
-
   </main>
 
-<footer class="site-footer">
-  <p class="footer-text">&copy; By Vagabond/Vaga-Yaga ( Discord : "lvagabond"), website made in 2025.</p>
-  <a href="https://ko-fi.com/levagabond" target="_blank" rel="noopener noreferrer" class="kofi-button">
-    <img src="https://storage.ko-fi.com/cdn/cup-border.png" alt="Ko-fi" class="kofi-icon">
-    Support the forge
-  </a>
-</footer>
+  <!-- Footer -->
+  <footer class="site-footer">
+    <p class="footer-text">&copy; By Vagabond/Vaga-Yaga ( Discord : "lvagabond"), website made in 2025.</p>
+    <a href="https://ko-fi.com/levagabond" target="_blank" rel="noopener noreferrer" class="kofi-button">
+      <img src="https://storage.ko-fi.com/cdn/cup-border.png" alt="Ko-fi" class="kofi-icon" width="20" height="20" loading="lazy" decoding="async">
+      Support the forge
+    </a>
+  </footer>
 
-  <script src="main.js"></script>
+  <!-- Import decision modal (still used when visiting a share link) -->
+  <div id="link-import-modal" class="import-modal" aria-hidden="true">
+    <div class="import-modal-content" role="dialog" aria-modal="true" aria-labelledby="import-title">
+      <h2 id="import-title">Import</h2>
+      <p id="import-summary">Choose how to import the incoming data.</p>
+
+      <!-- Selection of import target: craft or inventory. Default is based on the
+           encoded data type but the user can change it to import the items into
+           their craft list or inventory. -->
+      <div class="import-target" style="display:flex;gap:1rem;margin-bottom:.75rem;justify-content:center">
+        <label style="display:flex;align-items:center;gap:.35rem;">
+          <input type="radio" name="import-target" id="import-target-craft" value="craft" /> Craft
+        </label>
+        <label style="display:flex;align-items:center;gap:.35rem;">
+          <input type="radio" name="import-target" id="import-target-inventory" value="inventory" /> Inventory
+        </label>
+      </div>
+      <div class="import-details" id="import-details"></div>
+      <div class="import-buttons">
+        <button id="merge-import">Merge with current</button>
+        <button id="replace-import">Replace current</button>
+        <button id="cancel-import" class="import-cancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Share modal (on-site, no browser popup) -->
+  <div id="share-modal" class="import-modal" aria-hidden="true">
+    <div class="import-modal-content" role="dialog" aria-modal="true" aria-labelledby="share-title">
+      <h2 id="share-title">Share</h2>
+      <p id="share-summary">Share this link or code with your friends.</p>
+
+      <div class="import-details">
+        <label for="share-link" class="visually-hidden">Share link</label>
+        <input id="share-link" type="text" readonly value=""
+               style="width:100%;padding:.6rem;border-radius:10px;border:1px solid #555;background:transparent;color:var(--text);margin:.25rem 0 .5rem" />
+        <div style="display:flex;gap:.5rem;flex-wrap:wrap;justify-content:center;margin-bottom:.75rem">
+          <button id="copy-share-link">Copy Link</button>
+          <a id="open-share-link" href="#" style="align-self:center;font-size:.9rem;opacity:.8;text-decoration:underline">Open</a>
+        </div>
+
+        <!-- Hidden input holding the base64 code for internal use (view data). Not shown to user. -->
+        <input id="share-code" type="hidden" value="" />
+        <!-- A button to view the contents encoded in the share link or code. When clicked,
+             it decodes the payload (craft list or inventory) and displays the items in
+             a scrollable panel below. -->
+        <div style="display:flex;gap:.5rem;flex-wrap:wrap;justify-content:center;margin-top:.5rem">
+          <button id="view-share-data">View Data</button>
+        </div>
+        <!-- Container where the decoded share data is rendered. Initially hidden. -->
+        <div id="share-data-view" style="display:none;max-height:180px;overflow:auto;margin-top:.5rem;padding:.75rem;border:1px solid var(--accent);border-radius:10px;background:var(--surface)"></div>
+      </div>
+
+      <div class="import-buttons">
+        <button id="close-share-modal" class="import-cancel">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal to view contents of saved plans (craft or inventory). It displays the
+       items and quantities contained in the selected plan. -->
+  <div id="plan-view-modal" class="import-modal" aria-hidden="true">
+    <div class="import-modal-content" role="dialog" aria-modal="true" aria-labelledby="plan-view-title">
+      <h2 id="plan-view-title">Plan Contents</h2>
+      <div id="plan-view-content" class="import-details"></div>
+      <div class="import-buttons">
+        <button id="close-plan-view" class="import-cancel">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add query parameter to bust cache for updated scripts -->
+  <!-- Include version query to bust cache when updating the script. Increment this when main.js changes. -->
+  <script src="main.js?v=4"></script>
 </body>
 </html>

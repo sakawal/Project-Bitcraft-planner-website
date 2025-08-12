@@ -1,856 +1,1513 @@
+// The Bitcrafter's House — Main logic (refactor per spec)
 document.addEventListener('DOMContentLoaded', () => {
-  // --- CONFIGURATION & STATE VARIABLES ---
+  // ==============================
+  //  CONFIG & GLOBAL STATE
+  // ==============================
   const craftingURL = "https://raw.githubusercontent.com/fsobolev/BitPlanner/main/BitPlanner/crafting_data.json";
   const travelersURL = "https://raw.githubusercontent.com/fsobolev/BitPlanner/main/BitPlanner/travelers_data.json";
-  const assetsBaseURL = "assets/";
   const itemsPerPage = 50;
   const rarityMap = { 0: 'None', 1: 'Common', 2: 'Uncommon', 3: 'Rare', 4: 'Epic', 5: 'Legendary', 6: 'Mythic' };
 
+  // ---- Travelers profession (edit here in CODE) ----
+  // Remplis cette map avec les vraies professions quand tu les as :
+  const TRAVELER_PROFESSIONS = {
+    "Alesi": "Taming",
+    "Brico": "Construction",
+    "Heimlich": "Cooking",
+    "Ramparte": "Slayer",
+    "Rumbagh": "Merchanting",
+    "Svim": "Sailing",
+  };
+  const getProfession = (name) => TRAVELER_PROFESSIONS[name] || 'profession';
+
+  // --- generic name (pour la recherche) ---
+  const TIER_PREFIXES = [
+    "Rough","Simple","Sturdy","Fine","Exquisite","Peerless","Ornate","Pristine","Magnificent","Flawless",
+    "Flint","Ferralith","Pyrelite","Emarium","Elenvar","Luminite","Rathium","Aurumite","Celestium","Umbracite","Astralite",
+    "Beginner's","Novice's","Novice","Essential","Proficient","Advanced","Comprehensive",
+    "Plain","Savory","Zesty","Succulent","Ambrosial",
+    "Basic","Infused","Magnificient","Automata's"
+  ];
+  const _genericNameCache = new Map();
+  const getGenericName = (name) => {
+    if (!name) return "";
+    const cached = _genericNameCache.get(name);
+    if (cached) return cached;
+    for (const prefix of TIER_PREFIXES) {
+      const needle = `${prefix} `;
+      const i = name.indexOf(needle);
+      if (i > -1) {
+        const g = name.slice(0, i) + name.slice(i + needle.length);
+        _genericNameCache.set(name, g); return g;
+      }
+    }
+    _genericNameCache.set(name, name); return name;
+  };
+  const sortTierValue = (t) => (t === -1 || t == null) ? 9999 : t;
+
+  // Remote data
+  let craftingData = {};
+  let travelersData = [];
+
+  // UI state
   let items = [];
   let filteredItems = {};
   let currentPage = 1;
+
+  // Filters (Items tab)
   let searchValue = "";
   let tierFilter = "";
   let rarityFilter = "";
   let tagFilter = "";
-  let craftingData = {};
-  let travelersData = [];
 
-  // Load state from localStorage or set defaults
-  let craftList = JSON.parse(localStorage.getItem('craftList') || '{}');
-  let inventory = JSON.parse(localStorage.getItem('inventory') || '{}');
-  let travelerVisibility = JSON.parse(localStorage.getItem('travelerVisibility') || '{}');
-  let selectedRecipes = JSON.parse(localStorage.getItem('selectedRecipes') || '{}');
+  // Local storage state
+  let craftList = JSON.parse(localStorage.getItem('craftList') || '{}');                 // { id: qty }
+  let inventory = JSON.parse(localStorage.getItem('inventory') || '{}');                 // { id: qty }
+  let travelerVisibility = JSON.parse(localStorage.getItem('travelerVisibility') || '{}'); // { travelerName: boolean }
+  let selectedRecipes = JSON.parse(localStorage.getItem('selectedRecipes') || '{}');     // { id: recipeIndex }
+  let travelerLevels = JSON.parse(localStorage.getItem('travelerLevels') || '{}');       // { travelerName: level }
 
-  // --- INITIALIZATION & CORE APP LOGIC ---
+  // Saved plans (craft & inventory)
+  // craftPlans: { name: { list: {id: qty}, recipes: {id: idx} } }
+  let craftPlans = JSON.parse(localStorage.getItem('craftPlans') || '{}');
+  // inventoryPlans: { name: { inv: {id: qty} } }
+  let inventoryPlans = JSON.parse(localStorage.getItem('inventoryPlans') || '{}');
+
+  // ==============================
+  //  THEME (default: LIGHT)
+  // ==============================
+  initTheme();
+  function initTheme(){
+    const saved = localStorage.getItem('theme') || 'light';
+    document.documentElement.setAttribute('data-theme', saved);
+    // When the toggle is to the right (checked), we are in dark mode. When to the left (unchecked), we are in light mode.
+    const toggle = () => {
+      const now = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', now);
+      localStorage.setItem('theme', now);
+      const cb = document.getElementById('theme-toggle');
+      // Checked means dark mode
+      if (cb) cb.checked = (now === 'dark');
+    };
+    requestAnimationFrame(() => {
+      const cb = document.getElementById('theme-toggle');
+      if (cb) {
+        // Checked reflects dark mode
+        cb.checked = (saved === 'dark');
+        cb.addEventListener('change', toggle);
+      }
+    });
+  }
+
+  // ==============================
+  //  INIT
+  // ==============================
   const init = async () => {
     showMessage('Loading data...', 'info');
     try {
-      const [craftingResponse, travelersResponse] = await Promise.all([
-        fetch(craftingURL),
-        fetch(travelersURL)
-      ]);
-      if (!craftingResponse.ok || !travelersResponse.ok) {
-        throw new Error('Network response was not ok.');
-      }
-      craftingData = await craftingResponse.json();
-      travelersData = await travelersResponse.json();
-      items = Object.values(craftingData); 
+      const [craftingRes, travelersRes] = await Promise.all([ fetch(craftingURL), fetch(travelersURL) ]);
+      if (!craftingRes.ok || !travelersRes.ok) throw new Error('Network response was not ok.');
+      craftingData = await craftingRes.json();
+      travelersData = await travelersRes.json();
+      items = Object.values(craftingData);
 
       setupEventListeners();
       populateFilters();
       renderTravelerFilterButtons();
-      
+
       const activeTab = localStorage.getItem('activeTab') || 'travelers';
       switchTab(activeTab);
-      
+
+      // Render saved plans at startup
+      renderCraftPlans();
+      renderInventoryPlans();
+
+      // Auto-import ?craft=... ou ?inventory=...
+      tryImportFromURL();
+
       showMessage('Data loaded successfully!', 'success');
-    } catch (error) {
-      showMessage(`Error fetching data: ${error.message}`, 'error');
-      console.error("Fetch Error:", error);
+    } catch (err) {
+      console.error(err);
+      showMessage(`Error fetching data: ${err.message}`, 'error');
     }
   };
 
-  const setupEventListeners = () => {
-    document.querySelectorAll('nav li').forEach(button => {
-      button.addEventListener('click', () => switchTab(button.dataset.tab));
+  // ==============================
+  //  EVENT LISTENERS
+  // ==============================
+  function setupEventListeners(){
+    // Nav
+    document.querySelectorAll('nav li').forEach(btn => {
+      btn.addEventListener('click', () => switchTab(btn.dataset.tab));
     });
-    document.getElementById('hamburger-menu').addEventListener('click', () => document.getElementById('settings-modal').classList.add('active'));
-    document.getElementById('close-settings-modal').addEventListener('click', () => document.getElementById('settings-modal').classList.remove('active'));
-    document.getElementById('delete-cache-btn').addEventListener('click', clearLocalStorage);
-    document.getElementById('items-search').addEventListener('input', (e) => { searchValue = e.target.value; filterAndRenderItems(); });
-    document.getElementById('items-tier-filter').addEventListener('change', (e) => { tierFilter = e.target.value; filterAndRenderItems(); });
-    document.getElementById('items-rarity-filter').addEventListener('change', (e) => { rarityFilter = e.target.value; filterAndRenderItems(); });
-    document.getElementById('items-tag-filter').addEventListener('change', (e) => { tagFilter = e.target.value; filterAndRenderItems(); });
-    document.getElementById('prev-page').addEventListener('click', () => { if (currentPage > 1) { currentPage--; renderItemsGrid(); } });
-    document.getElementById('next-page').addEventListener('click', () => { if (currentPage < Math.ceil(Object.keys(filteredItems).length / itemsPerPage)) { currentPage++; renderItemsGrid(); } });
-    document.getElementById('player-level-filter').addEventListener('input', filterAndRenderTravelers);
-    document.getElementById('clear-craft-list-btn').addEventListener('click', clearCraftList);
-    document.getElementById('clear-inventory-btn').addEventListener('click', clearInventory);
-    document.getElementById('travelers-grid').addEventListener('click', e => {
-        if (e.target.classList.contains('add-to-craft-btn-quest')) {
-            const { itemId, quantity } = e.target.dataset;
-            addToCraftList(itemId, parseInt(quantity, 10));
-        }
-    });
-    document.getElementById('items-grid').addEventListener('click', handleItemCardClick);
+
+    // Settings modal (gear button)
     const settingsModal = document.getElementById('settings-modal');
-    
-    settingsModal.addEventListener('click', (e) => {
-        if (e.target === settingsModal) {
-            settingsModal.classList.remove('active');
-        }
-    });
-    window.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape' && settingsModal.classList.contains('active')) {
-            settingsModal.classList.remove('active');
-        }
-    });
-  };
-
-  const switchTab = (tabId) => {
-    document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
-    document.querySelectorAll('nav li').forEach(btn => btn.classList.remove('active'));
-    
-    document.getElementById(tabId).classList.add('active');
-    document.querySelector(`nav li[data-tab='${tabId}']`).classList.add('active');
-    
-    localStorage.setItem('activeTab', tabId);
-
-    switch (tabId) {
-      case 'items': filterAndRenderItems(); break;
-      case 'travelers': filterAndRenderTravelers(); break;
-      case 'craft': renderCraftingTab(); break;
-      case 'inventory': renderInventory(); break;
+    // Support both legacy id "hamburger-menu" and current "settings-gear"
+    const gearBtn = document.getElementById('settings-gear') || document.getElementById('hamburger-menu');
+    const closeSettings = document.getElementById('close-settings-modal');
+    if (gearBtn && settingsModal) {
+      const open = () => settingsModal.classList.add('active');
+      gearBtn.addEventListener('click', open);
+      gearBtn.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') open(); });
     }
-  };
+    if (closeSettings && settingsModal) {
+      const close = () => settingsModal.classList.remove('active');
+      closeSettings.addEventListener('click', close);
+      settingsModal.addEventListener('click', (e) => { if (e.target === settingsModal) close(); });
+      window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && settingsModal.classList.contains('active')) close(); });
+    }
 
-  // --- ITEMS TAB ---
-  const populateFilters = () => {
-    const tierFilterSelect = document.getElementById('items-tier-filter');
-    const tagFilterSelect = document.getElementById('items-tag-filter');
-    const tiers = [...new Set(items.map(item => item.tier).filter(t => t !== undefined))].sort((a, b) => a - b);
-    const tags = [...new Set(items.flatMap(item => item.tag || []))].sort();
+    // Danger zone
+    const deleteCacheBtn = document.getElementById('delete-cache-btn');
+    if (deleteCacheBtn) deleteCacheBtn.addEventListener('click', clearLocalStorage);
 
-    tierFilterSelect.innerHTML = '<option value="">All Tiers</option>';
-    tiers.forEach(tier => tierFilterSelect.innerHTML += `<option value="${tier}">Tier ${tier}</option>`);
+    // Local storage export/import
+    const exportBtn = document.getElementById('export-localstorage-btn');
+    const importBtn = document.getElementById('import-localstorage-btn');
+    const importFile = document.getElementById('import-localstorage-file');
+    if (exportBtn) exportBtn.addEventListener('click', exportLocalStorageData);
+    if (importBtn) importBtn.addEventListener('click', () => importFile?.click());
+    if (importFile && !importFile._bound) {
+      importFile.addEventListener('change', handleLocalStorageImport);
+      importFile._bound = true;
+    }
 
-    tagFilterSelect.innerHTML = '<option value="">All Tags</option>';
-    tags.forEach(tag => tagFilterSelect.innerHTML += `<option value="${tag}">${tag}</option>`);
-  };
+    // Items controls
+    const searchInput = document.getElementById('items-search');
+    const tierSel = document.getElementById('items-tier-filter');
+    const raritySel = document.getElementById('items-rarity-filter');
+    const tagSel = document.getElementById('items-tag-filter');
+    if (searchInput) searchInput.addEventListener('input', e => { searchValue = e.target.value; filterAndRenderItems(); });
+    if (tierSel) tierSel.addEventListener('change', e => { tierFilter = e.target.value; filterAndRenderItems(); });
+    if (raritySel) raritySel.addEventListener('change', e => { rarityFilter = e.target.value; filterAndRenderItems(); });
+    if (tagSel) tagSel.addEventListener('change', e => { tagFilter = e.target.value; filterAndRenderItems(); });
 
-  const filterAndRenderItems = () => {
-    const filteredEntries = Object.entries(craftingData).filter(([id, item]) => 
-      item.name.toLowerCase().includes(searchValue.toLowerCase()) &&
-      (tierFilter === "" || item.tier?.toString() === tierFilter) &&
-      (rarityFilter === "" || item.rarity?.toString() === rarityFilter) &&
-      (tagFilter === "" || item.tag?.toLowerCase() === tagFilter.toLowerCase())
-    );
+    // Pagination
+    const prevBtn = document.getElementById('prev-page');
+    const nextBtn = document.getElementById('next-page');
+    if (prevBtn) prevBtn.addEventListener('click', () => { if (currentPage > 1) { currentPage--; renderItemsGrid(); } });
+    if (nextBtn) nextBtn.addEventListener('click', () => {
+      const totalPages = Math.ceil(Object.keys(filteredItems).length / itemsPerPage) || 1;
+      if (currentPage < totalPages) { currentPage++; renderItemsGrid(); }
+    });
+
+    // Items grid
+    const itemsGrid = document.getElementById('items-grid');
+    if (itemsGrid) itemsGrid.addEventListener('click', handleItemCardClick);
+
+    // Travelers grid (Add depuis quêtes)
+    const travelersGrid = document.getElementById('travelers-grid');
+    if (travelersGrid) {
+      travelersGrid.addEventListener('click', e => {
+        if (e.target.classList.contains('add-to-craft-btn-quest')) {
+          const { itemId, quantity } = e.target.dataset;
+          addToCraftList(itemId, parseInt(quantity, 10));
+          renderCraftingTab();
+        }
+      });
+    }
+
+    // Craft actions
+    const clearCraftBtn = document.getElementById('clear-craft-list-btn');
+    if (clearCraftBtn) clearCraftBtn.addEventListener('click', clearCraftList);
+    const shareCraftBtn = document.getElementById('share-craft-list-btn');
+    if (shareCraftBtn) shareCraftBtn.addEventListener('click', () => shareViaLink('craft'));
+
+    // Inventory actions
+    const clearInventoryBtn = document.getElementById('clear-inventory-btn');
+    if (clearInventoryBtn) clearInventoryBtn.addEventListener('click', clearInventory);
+    const shareInventoryBtn = document.getElementById('share-inventory-btn');
+    if (shareInventoryBtn) shareInventoryBtn.addEventListener('click', () => shareViaLink('inventory'));
+
+    // Share modal
+    wireShareModal();
+
+    // Craft plan save
+    const savePlanBtn = document.getElementById('save-plan-btn');
+    if (savePlanBtn) savePlanBtn.addEventListener('click', () => {
+      const inp = document.getElementById('plan-name-input');
+      const name = inp?.value.trim();
+      if (!name) { showMessage('Please enter a plan name.', 'error'); return; }
+      if (Object.keys(craftList).length === 0) { showMessage('Craft list is empty.', 'error'); return; }
+      craftPlans[name] = { list: { ...craftList }, recipes: { ...selectedRecipes } };
+      localStorage.setItem('craftPlans', JSON.stringify(craftPlans));
+      inp.value = '';
+      renderCraftPlans();
+      showMessage('Plan saved!', 'success');
+    });
+    // Inventory plan save
+    const saveInvPlanBtn = document.getElementById('save-inv-plan-btn');
+    if (saveInvPlanBtn) saveInvPlanBtn.addEventListener('click', () => {
+      const inp = document.getElementById('inv-plan-name-input');
+      const name = inp?.value.trim();
+      if (!name) { showMessage('Please enter a plan name.', 'error'); return; }
+      if (Object.keys(inventory).length === 0) { showMessage('Inventory is empty.', 'error'); return; }
+      inventoryPlans[name] = { inv: { ...inventory } };
+      localStorage.setItem('inventoryPlans', JSON.stringify(inventoryPlans));
+      inp.value = '';
+      renderInventoryPlans();
+      showMessage('Plan saved!', 'success');
+    });
+    // Plan action handlers (craft & inventory)
+    const plansList = document.getElementById('plans-list');
+    if (plansList && !plansList._bound) {
+      plansList.addEventListener('click', handleCraftPlanClick);
+      plansList._bound = true;
+    }
+    const invPlansList = document.getElementById('inv-plans-list');
+    if (invPlansList && !invPlansList._bound) {
+      invPlansList.addEventListener('click', handleInventoryPlanClick);
+      invPlansList._bound = true;
+    }
+  }
+
+  // ==============================
+  //  TABS
+  // ==============================
+  function switchTab(tabId){
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('nav li').forEach(b => b.classList.remove('active'));
+    document.getElementById(tabId)?.classList.add('active');
+    document.querySelector(`nav li[data-tab='${tabId}']`)?.classList.add('active');
+    localStorage.setItem('activeTab', tabId);
+    if (tabId === 'items') filterAndRenderItems();
+    if (tabId === 'travelers') filterAndRenderTravelers();
+    if (tabId === 'craft') renderCraftingTab();
+    if (tabId === 'inventory') renderInventory();
+  }
+
+  // ==============================
+  //  ITEMS TAB
+  // ==============================
+  function populateFilters(){
+    const tierSel = document.getElementById('items-tier-filter');
+    const tagSel = document.getElementById('items-tag-filter');
+    if (!tierSel || !tagSel) return;
+    const tiers = [...new Set(items.map(i => i.tier).filter(t => t !== undefined))].sort((a,b)=>a-b);
+    const tags = [...new Set(items.flatMap(i => i.tag || []))].sort();
+    tierSel.innerHTML = '<option value="">All Tiers</option>';
+    tiers.forEach(t => tierSel.innerHTML += `<option value="${t}">Tier ${t}</option>`);
+    tagSel.innerHTML = '<option value="">All Tags</option>';
+    tags.forEach(t => tagSel.innerHTML += `<option value="${t}">${t}</option>`);
+  }
+
+  function filterAndRenderItems(){
+    const q = (searchValue || '').toLowerCase();
+    const filteredEntries = Object.entries(craftingData).filter(([id,item])=>{
+      const name = item.name || '';
+      const gname = getGenericName(name);
+      const hit = name.toLowerCase().includes(q) || gname.toLowerCase().includes(q);
+      return hit &&
+        (tierFilter === "" || item.tier?.toString() === tierFilter) &&
+        (rarityFilter === "" || item.rarity?.toString() === rarityFilter) &&
+        (tagFilter === "" || (typeof item.tag === 'string'
+          ? item.tag.toLowerCase() === tagFilter.toLowerCase()
+          : Array.isArray(item.tag) && item.tag.some(t => t.toLowerCase() === tagFilter.toLowerCase())));
+    });
+
+    filteredEntries.sort((a,b)=>{
+      const A=a[1], B=b[1];
+      const sa = (A?.extraction_skill ?? 999);
+      const sb = (B?.extraction_skill ?? 999);
+      if (sa !== sb) return sa - sb;
+      const ga = getGenericName(A?.name||'');
+      const gb = getGenericName(B?.name||'');
+      const gcmp = ga.localeCompare(gb);
+      if (gcmp !== 0) return gcmp;
+      const ta = sortTierValue(A?.tier);
+      const tb = sortTierValue(B?.tier);
+      if (ta !== tb) return ta - tb;
+      return (A?.name||'').localeCompare(B?.name||'');
+    });
+
     filteredItems = Object.fromEntries(filteredEntries);
     currentPage = 1;
     renderItemsGrid();
-  };
+  }
 
-  const renderItemsGrid = () => {
-    const itemsGrid = document.getElementById('items-grid');
-    itemsGrid.innerHTML = '';
-    const allFilteredEntries = Object.entries(filteredItems);
-    const startIndex = (currentPage - 1) * itemsPerPage;
-    const itemsToRender = allFilteredEntries.slice(startIndex, startIndex + itemsPerPage);
+  function renderItemsGrid(){
+    const grid = document.getElementById('items-grid');
+    if (!grid) return;
+    grid.innerHTML = '';
 
-    if (itemsToRender.length === 0) {
-      itemsGrid.innerHTML = '<p>No items found.</p>';
-      renderPagination();
-      return;
-    }
+    const entries = Object.entries(filteredItems);
+    const start = (currentPage - 1) * itemsPerPage;
+    const slice = entries.slice(start, start + itemsPerPage);
+    if (slice.length === 0){ grid.innerHTML = '<p>No items found.</p>'; renderPagination(); return; }
 
-    const fragment = document.createDocumentFragment();
-    itemsToRender.forEach(([id, item]) => {
-      const itemCard = document.createElement('div');
-      itemCard.className = 'item-card';
-      const imageUrl = `assets/${item.icon}.png`;
-      const placeholderUrl = `https://placehold.co/64x64/2b2b41/e0e0e0?text=IMG`;
-      itemCard.innerHTML = `
-        <img src="${imageUrl}" alt="${item.name}" onerror="this.onerror=null;this.src='${placeholderUrl}';"/>
+    const frag = document.createDocumentFragment();
+    const ph = `https://placehold.co/64x64/2b2b41/e0e0e0?text=IMG`;
+
+    slice.forEach(([id,item])=>{
+      const invOwned = inventory[id] || 0;
+      const craftOwned = craftList[id] || 0;
+      const tierText = (item.tier === -1 || item.tier == null) ? 'No Tier' : `Tier ${item.tier}`;
+      const img = `assets/${item.icon}.png`;
+
+      const card = document.createElement('div');
+      card.className = 'item-card';
+      card.dataset.id = id;
+      // Card HTML without the top badges; integrate counts into action buttons
+      card.innerHTML = `
+        <img src="${img}" alt="${item.name}" width="64" height="64"
+             loading="lazy" decoding="async"
+             onerror="this.onerror=null;this.src='${ph}';"/>
         <div class="item-name">${item.name}</div>
-        <div class="item-tier">Tier ${item.tier ?? 'N/A'}</div>
+        <div class="item-tier">${tierText}</div>
         <div class="item-rarity">${rarityMap[item.rarity] || 'Unknown'}</div>
         <div class="quantity-controls">
-          <button class="quantity-btn minus-btn">-</button>
+          <button class="quantity-btn minus-btn" aria-label="Decrease">−</button>
           <input type="number" value="1" min="1" class="quantity-input"/>
-          <button class="quantity-btn plus-btn">+</button>
+          <button class="quantity-btn plus-btn" aria-label="Increase">+</button>
         </div>
         <div class="item-actions">
-          <button class="add-to-craft-btn" data-item-id="${id}">Add to Craft</button>
-          <button class="add-to-inventory-btn" data-item-id="${id}">Add to Inventory</button>
-        </div>
-      `;
-      fragment.appendChild(itemCard);
+          <button class="add-to-craft-btn" data-item-id="${id}">Add to Craft (${craftOwned})</button>
+          <button class="add-to-inventory-btn" data-item-id="${id}">Add to Inventory (${invOwned})</button>
+        </div>`;
+      frag.appendChild(card);
     });
-    itemsGrid.appendChild(fragment);
+
+    grid.appendChild(frag);
     renderPagination();
-  };
-  
-  const handleItemCardClick = (e) => {
+  }
+
+  function handleItemCardClick(e){
     const target = e.target;
     const card = target.closest('.item-card');
     if (!card) return;
+    const qInput = card.querySelector('.quantity-input');
+    if (!qInput) return;
+    let q = parseInt(qInput.value, 10) || 1;
 
-    const quantityInput = card.querySelector('.quantity-input');
-    if (!quantityInput) return;
-
-    let currentQuantity = parseInt(quantityInput.value, 10) || 1;
-
-    if (target.classList.contains('plus-btn')) {
-        quantityInput.value = currentQuantity + 1;
-        return;
-    }
-
-    if (target.classList.contains('minus-btn')) {
-        quantityInput.value = Math.max(1, currentQuantity - 1);
-        return;
-    }
+    if (target.classList.contains('plus-btn')) { qInput.value = q + 1; return; }
+    if (target.classList.contains('minus-btn')) { qInput.value = Math.max(1, q - 1); return; }
 
     if (target.classList.contains('add-to-craft-btn') || target.classList.contains('add-to-inventory-btn')) {
-        const itemId = target.dataset.itemId;
-        if (!itemId) {
-            console.error("Button is missing data-item-id attribute!");
-            return;
-        }
-        if (target.classList.contains('add-to-craft-btn')) {
-            addToCraftList(itemId, currentQuantity);
-        } else {
-            addToInventory(itemId, currentQuantity);
-        }
+      const id = target.dataset.itemId;
+      if (!id) return;
+      if (target.classList.contains('add-to-craft-btn')) addToCraftList(id, q);
+      else addToInventory(id, q);
+
+      // Refresh badges tout de suite
+      renderItemsGrid();
+      if (document.getElementById('craft')?.classList.contains('active')) renderCraftingTab();
+      if (document.getElementById('inventory')?.classList.contains('active')) renderInventory();
     }
-  };
+  }
 
-  const renderPagination = () => {
-    const totalPages = Math.ceil(Object.keys(filteredItems).length / itemsPerPage);
-    document.getElementById('page-indicator').textContent = `Page ${currentPage} / ${totalPages || 1}`;
-    document.getElementById('prev-page').disabled = currentPage === 1;
-    document.getElementById('next-page').disabled = currentPage >= totalPages;
-  };
+  function renderPagination(){
+    const totalPages = Math.ceil(Object.keys(filteredItems).length / itemsPerPage) || 1;
+    const ind = document.getElementById('page-indicator');
+    const prev = document.getElementById('prev-page');
+    const next = document.getElementById('next-page');
+    if (ind) ind.textContent = `Page ${currentPage} / ${totalPages}`;
+    if (prev) prev.disabled = currentPage === 1;
+    if (next) next.disabled = currentPage >= totalPages;
+  }
 
-  // --- TRAVELERS TAB ---
-  const renderTravelerFilterButtons = () => {
-    const container = document.getElementById('traveler-filter-buttons');
-    container.innerHTML = '';
-    travelersData.forEach(traveler => {
-      travelerVisibility[traveler.name] = travelerVisibility[traveler.name] ?? true;
-      const button = document.createElement('button');
-      button.textContent = traveler.name;
-      button.className = `traveler-filter-btn ${travelerVisibility[traveler.name] ? 'active' : ''}`;
-      button.addEventListener('click', () => {
-        travelerVisibility[traveler.name] = !travelerVisibility[traveler.name];
+  // ==============================
+  //  TRAVELERS
+  // ==============================
+  function getTravelerLevel(name){
+    const v = travelerLevels?.[name];
+    const n = parseInt(v, 10);
+    return Number.isFinite(n) && n >= 1 ? n : 1;
+  }
+  function saveTravelerLevel(name, lvl){
+    const n = Math.max(1, parseInt(lvl, 10) || 1);
+    travelerLevels[name] = n;
+    saveToLocalStorage('travelerLevels', travelerLevels);
+    return n;
+  }
+
+  function renderTravelerFilterButtons(){
+    const c = document.getElementById('traveler-filter-buttons');
+    if (!c) return;
+    c.innerHTML = '';
+    travelersData.forEach(t => {
+      travelerVisibility[t.name] = travelerVisibility[t.name] ?? true;
+      const b = document.createElement('button');
+      b.textContent = t.name;
+      b.className = `traveler-filter-btn ${travelerVisibility[t.name] ? 'active' : ''}`;
+      b.addEventListener('click', () => {
+        travelerVisibility[t.name] = !travelerVisibility[t.name];
         saveToLocalStorage('travelerVisibility', travelerVisibility);
         renderTravelerFilterButtons();
         filterAndRenderTravelers();
       });
-      container.appendChild(button);
+      c.appendChild(b);
     });
-  };
+  }
 
-  const filterAndRenderTravelers = () => {
+  function filterAndRenderTravelers(){
     const grid = document.getElementById('travelers-grid');
+    if (!grid) return;
     grid.innerHTML = '';
-    const playerLevel = parseInt(document.getElementById('player-level-filter').value, 10) || 1;
-    const placeholderUrl = `https://placehold.co/64x64/2b2b41/e0e0e0?text=IMG`;
-    const filteredTravelers = travelersData.filter(t => travelerVisibility[t.name]);
-    if (filteredTravelers.length === 0) {
-        grid.innerHTML = '<p>No travelers selected.</p>';
-        return;
-    }
-    filteredTravelers.forEach(traveler => {
-      const validTasks = traveler.tasks.filter(task => playerLevel >= task.levels[0] && playerLevel <= task.levels[1]);
-      if (validTasks.length === 0) return;
-      const travelerCard = document.createElement('div');
-      travelerCard.className = 'traveler-card';
-      const travelerImgUrl = `assets/Travelers/${traveler.name}.png`;
-      const tasksHtml = validTasks.map(task => {
-        const itemsHtml = Object.entries(task.required_items).map(([id, q]) => {
-          const item = craftingData[id];
-          if (!item) {
-            console.warn(`Item with ID "${id}" for traveler quest not found.`);
-            return '';
-          }
-          const itemImgUrl = `assets/${item.icon}.png`;
+    const ph = `https://placehold.co/64x64/2b2b41/e0e0e0?text=IMG`;
+    const list = travelersData.filter(t => travelerVisibility[t.name]);
+    if (list.length === 0){ grid.innerHTML = '<p>No travelers selected.</p>'; return; }
+
+    list.forEach(traveler => {
+      const lvl = getTravelerLevel(traveler.name);
+      const valid = traveler.tasks.filter(task => {
+        const [minL, maxL] = task.levels || [1, 999];
+        return lvl >= minL && lvl <= maxL;
+      });
+      if (valid.length === 0) return;
+
+      const card = document.createElement('div');
+      card.className = 'traveler-card';
+      const tImg = `assets/Travelers/${traveler.name}.png`;
+
+      const tasksHtml = valid.map(task => {
+        const itemsHtml = Object.entries(task.required_items).map(([id,q])=>{
+          const it = craftingData[id]; if (!it) return '';
+          const icon = `assets/${it.icon}.png`;
           return `<li>
-                    <img src="${itemImgUrl}" alt="${item.name}" onerror="this.onerror=null;this.src='${placeholderUrl}';"/>
-                    <span>${item.name} (x${q})</span>
-                    <button class="add-to-craft-btn-quest" data-item-id="${id}" data-quantity="${q}">Add</button>
-                  </li>`;
+            <img src="${icon}" alt="${it.name}" width="32" height="32" loading="lazy" decoding="async"
+                 onerror="this.onerror=null;this.src='${ph}';"/>
+            <span>${it.name} (x${q})</span>
+            <button class="add-to-craft-btn-quest" data-item-id="${id}" data-quantity="${q}">Add</button>
+          </li>`;
         }).join('');
         return `<div class="task-card">
-                  <h4 class="task-title">Quest (Lv ${task.levels[0]}-${task.levels[1]})</h4>
-                  <ul class="quest-items-list">${itemsHtml}</ul>
-                  <p class="reward"><strong>Reward:</strong> ${task.reward} HexCoins, ${task.experience} XP</p>
-                </div>`;
+          <h4 class="task-title">Quest (Lv ${task.levels?.[0] ?? '?'}-${task.levels?.[1] ?? '?'})</h4>
+          <ul class="quest-items-list">${itemsHtml}</ul>
+          <p class="reward"><strong>Reward:</strong> ${task.reward} HexCoins, ${task.experience} XP</p>
+        </div>`;
       }).join('');
-      travelerCard.innerHTML = `
+
+      const prof = getProfession(traveler.name);
+
+      card.innerHTML = `
         <div class="traveler-header">
-          <img src="${travelerImgUrl}" alt="${traveler.name}" class="traveler-icon" onerror="this.onerror=null;this.src='${placeholderUrl}';"/>
-          <h3>${traveler.name}</h3>
+          <img src="${tImg}" alt="${traveler.name}" class="traveler-icon" width="64" height="64"
+               loading="lazy" decoding="async" onerror="this.onerror=null;this.src='${ph}';"/>
+          <div class="traveler-title-wrap">
+            <h3>${traveler.name}</h3>
+            <div class="traveler-note">${prof}</div>
+          </div>
+          <div class="traveler-level">
+            <label>Lvl:</label>
+            <input type="number" min="1" value="${lvl}" class="traveler-level-input" data-traveler="${traveler.name}"/>
+          </div>
         </div>
         <div class="tasks-container">${tasksHtml}</div>`;
-      grid.appendChild(travelerCard);
+      grid.appendChild(card);
     });
-  };
 
-  // --- CRAFTING TAB ---
-  const renderCraftingTab = () => {
-    showLoadingScreen(true);
-    setTimeout(() => {
-      renderCraftList();
-      const { rawRequirements, craftingSteps, inventoryUsage } = calculateCraftingRequirements();
-      renderRequiredResources(rawRequirements);
-      renderInventoryUsage(inventoryUsage);
-      renderCraftingSteps(craftingSteps);
-      showLoadingScreen(false);
-    }, 50);
-  };
+    // bind once
+    if (!grid._bound){
+      grid.addEventListener('change', (e)=>{
+        if (!e.target.classList.contains('traveler-level-input')) return;
+        const name = e.target.dataset.traveler;
+        const v = saveTravelerLevel(name, e.target.value.trim());
+        e.target.value = v;
+        filterAndRenderTravelers();
+      });
+      grid.addEventListener('keydown', (e)=>{
+        if (!e.target.classList.contains('traveler-level-input')) return;
+        if (e.key !== 'Enter') return;
+        e.preventDefault();
+        const name = e.target.dataset.traveler;
+        const v = saveTravelerLevel(name, e.target.value.trim());
+        e.target.value = v;
+        e.target.blur();
+        filterAndRenderTravelers();
+      });
+      grid._bound = true;
+    }
+  }
 
-  const renderCraftList = () => {
-    const container = document.getElementById('craft-list');
-    container.innerHTML = '<h3>Items to Craft</h3>';
+  // ==============================
+  //  CRAFT (calc + render)
+  // ==============================
+  const PH24 = 'https://placehold.co/24x24/2b2b41/e0e0e0?text=IMG';
+  const PH40 = 'https://placehold.co/40x40/2b2b41/e0e0e0?text=IMG';
+  const PH48 = 'https://placehold.co/48x48/2b2b41/e0e0e0?text=IMG';
+
+  function renderCraftingTab(){
+    renderCraftList();
+    const { rawRequirements, craftingSteps, inventoryUsage } = calculateCraftingRequirements();
+    renderRequiredResources(rawRequirements);
+    renderInventoryUsage(inventoryUsage);
+    renderCraftingSteps(craftingSteps);
+  }
+
+  function renderCraftList(){
+    const c = document.getElementById('craft-list');
+    c.innerHTML = '<h3>Items to Craft</h3>';
     if (Object.keys(craftList).length === 0) {
-      container.innerHTML += '<p>Your craft list is empty.</p>';
-      return;
+      c.innerHTML += '<p>Your craft list is empty.</p>';
+    } else {
+      Object.entries(craftList).forEach(([id, qty])=>{
+        const it = craftingData[id]; if (!it) return;
+        const card = document.createElement('div');
+        card.className = 'craft-item-card';
+        card.innerHTML = `
+          <img src="assets/${it.icon}.png" alt="${it.name}" width="48" height="48"
+               loading="lazy" decoding="async" onerror="this.onerror=null;this.src='${PH48}'"/>
+          <div class="item-name">${it.name}</div>
+          <div class="craft-item-controls">
+            <button data-action="decrease" data-id="${id}" class="btn-round btn-minus" title="Decrease">−</button>
+            <input type="number" value="${qty}" min="0" data-id="${id}"/>
+            <button data-action="increase" data-id="${id}" class="btn-round btn-plus" title="Increase">+</button>
+            <button data-action="remove" data-id="${id}" class="btn-ghost-danger">Remove</button>
+          </div>`;
+        c.appendChild(card);
+      });
     }
-    Object.entries(craftList).forEach(([id, quantity]) => {
-      const item = craftingData[id];
-      if (!item) {
-          console.warn(`Item with ID "${id}" not found in crafting data. Skipping from craft list render.`);
-          return;
-      }
-      const card = document.createElement('div');
-      card.className = 'craft-item-card';
-      const imageUrl = `assets/${item.icon}.png`;
-      const placeholderUrl = `https://placehold.co/48x48/2b2b41/e0e0e0?text=IMG`;
-      card.innerHTML = `
-        <img src="${imageUrl}" alt="${item.name}" onerror="this.onerror=null;this.src='${placeholderUrl}';"/>
-        <div class="item-name">${item.name}</div>
-        <div class="craft-item-controls">
-          <button data-action="decrease" data-id="${id}">-</button>
-          <input type="number" value="${quantity}" min="0" data-id="${id}"/>
-          <button data-action="increase" data-id="${id}">+</button>
-          <button data-action="remove" data-id="${id}">Remove</button>
-        </div>`;
-      container.appendChild(card);
-    });
-    container.addEventListener('click', handleCraftListUpdate);
-    container.addEventListener('change', handleCraftListUpdate);
-  };
+    if (!c._bound){
+      c.addEventListener('click', handleCraftListUpdate);
+      c.addEventListener('change', handleCraftListUpdate);
+      c._bound = true;
+    }
+  }
 
-  const handleCraftListUpdate = (e) => {
-    const { action, id } = e.target.dataset;
+  function handleCraftListUpdate(e){
+    const { action, id } = e.target.dataset || {};
     if (!id) return;
-    const quantity = parseInt(craftList[id], 10) || 0;
-    if (e.type === 'change') {
-      updateCraftQuantity(id, parseInt(e.target.value, 10));
-    } else if (action === 'increase') {
-      updateCraftQuantity(id, quantity + 1);
-    } else if (action === 'decrease') {
-      updateCraftQuantity(id, quantity - 1);
-    } else if (action === 'remove') {
-      updateCraftQuantity(id, 0);
-    }
-  };
+    const current = parseInt(craftList[id], 10) || 0;
+    if (e.type === 'change') updateCraftQuantity(id, parseInt(e.target.value, 10));
+    else if (action === 'increase') updateCraftQuantity(id, current + 1);
+    else if (action === 'decrease') updateCraftQuantity(id, current - 1);
+    else if (action === 'remove') updateCraftQuantity(id, 0);
+  }
 
-  const renderCraftingSteps = (craftingSteps) => {
-    const container = document.getElementById('craft-steps-list');
-    container.innerHTML = '';
-    if (craftingSteps.length === 0) {
-      container.innerHTML = '<p>No crafting steps required.</p>';
+  function renderCraftingSteps(craftingSteps){
+    const c = document.getElementById('craft-steps-list');
+    if (!c) return;
+    c.innerHTML = '';
+
+    if (!Array.isArray(craftingSteps) || craftingSteps.length === 0){
+      c.innerHTML = '<p>No crafting steps required.</p>';
       return;
     }
-    craftingSteps.forEach((step, index) => {
-      const item = craftingData[step.id];
-      if (!item) {
-          console.warn(`Item with ID "${step.id}" not found. Skipping from craft steps render.`);
-          return;
-      }
-      const card = document.createElement('div');
-      card.className = 'craft-step-card';
+
+    // Select handler (once)
+    if (!c._selectBound){
+      c.addEventListener('change', e=>{
+        if (e.target.tagName !== 'SELECT') return;
+        const itemId = e.target.dataset.id;
+        const idx = parseInt(e.target.value, 10);
+        selectedRecipes[itemId] = idx;
+        saveToLocalStorage('selectedRecipes', selectedRecipes);
+        renderCraftingTab();
+      });
+      c._selectBound = true;
+    }
+    // Inventory adjust handlers (once)
+    if (!c._invBound){
+      /**
+       * Delegate click events for inventory adjustment within crafting steps.
+       * We support both custom classes (.inv-add-btn/.inv-minus-btn) and
+       * generic plus/minus button classes used by the existing theme. Only
+       * buttons under the craft steps list will trigger inventory updates.
+       */
+      c.addEventListener('click', e => {
+        let btn = e.target.closest('button');
+        if (!btn) return;
+        // Ensure this is an adjustment button by checking data-id
+        const id = btn.dataset.id;
+        if (!id) return;
+        const current = inventory[id] || 0;
+        // Determine action: positive if contains inv-add-btn or btn-plus; negative if inv-minus-btn or btn-minus
+        const inc = btn.classList.contains('inv-add-btn') || btn.classList.contains('btn-plus');
+        const dec = btn.classList.contains('inv-minus-btn') || btn.classList.contains('btn-minus');
+        if (!inc && !dec) return;
+        if (inc) {
+          updateInventoryQuantity(id, current + 1);
+          // Show a small info to confirm click
+          showMessage('Added to inventory', 'info');
+        } else if (dec) {
+          updateInventoryQuantity(id, current - 1);
+          showMessage('Removed from inventory', 'info');
+        }
+      });
+      c._invBound = true;
+    }
+
+    craftingSteps.forEach((step, i)=>{
+      const it = craftingData[step.id]; if (!it) return;
+
+      // Calcul du required **par ingrédient** (affiche seulement “required: N”)
+      const ingredientsComputed = (step.ingredients || []).map(ing => {
+        const have = inventory[ing.id] || 0;
+        const need = Math.max(0, Math.ceil(ing.quantityNeeded - have));
+        return { ...ing, need };
+      });
+
+      // 👉 CACHE LA STEP si tous les ingrédients ont need = 0
+      const allOk = ingredientsComputed.every(x => x.need === 0);
+      if (allOk) return;
+
+      // Recipe selector si >1
       let recipeSelectorHtml = '';
-      if (item.recipes.length > 1) {
-        const options = item.recipes.map((recipe, idx) => {
-          const ingredientsText = recipe.consumed_items
-            .map(ing => {
-              const ingItem = craftingData[ing.id];
-              return ingItem ? `${ing.quantity}x ${ingItem.name}` : 'Unknown Item';
-            })
-            .join(', ');
-          return `<option value="${idx}" ${idx === step.recipeIndex ? 'selected' : ''}>Recipe: ${ingredientsText}</option>`;
+      if (Array.isArray(it.recipes) && it.recipes.length > 1){
+        const options = it.recipes.map((r, idx)=>{
+          const txt = (r.consumed_items || []).map(ci=>{
+            const ii = craftingData[ci.id]; return ii ? `${ci.quantity}x ${ii.name}` : 'Unknown';
+          }).join(', ');
+          return `<option value="${idx}" ${idx===step.recipeIndex?'selected':''}>Recipe: ${txt}</option>`;
         }).join('');
         recipeSelectorHtml = `<div class="recipe-selector"><select data-id="${step.id}">${options}</select></div>`;
       }
-      const ownedForStep = inventory[step.id] || 0;
-      const deficit = Math.max(0, step.quantityToCraft - ownedForStep);
-      let titleDetail = '';
-      if (deficit > 0) {
-          titleDetail = ownedForStep > 0 ? ` (${ownedForStep} in inventory, ${Math.ceil(deficit)} missing)` : ` (${Math.ceil(deficit)} missing)`;
-      } else {
-          titleDetail = ` (${ownedForStep} in inventory)`;
-      }
-      const ingredientsHtml = step.ingredients.map(ing => {
-        const ingItem = craftingData[ing.id];
-        if (!ingItem) return `<li>Unknown Item</li>`; 
-        const needed = ing.quantityNeeded;
-        const owned = inventory[ing.id] || 0;
-        const statusClass = owned >= needed ? 'green' : owned > 0 ? 'orange' : 'red';
-        return `<li><span class="ingredient-name">${ingItem.name}</span> <span class="step-status ${statusClass}"> in inventory : ${Math.ceil(owned)}/${Math.ceil(needed)} </span></li>`;
-      }).join('');
-      card.innerHTML = `
-        <div class="step-header">
-          <h4 class="step-title">Step ${index + 1}: Craft ${Math.ceil(step.quantityToCraft)}x ${item.name}</h4>
-        </div>
-        ${recipeSelectorHtml}
-        <h5 class="ingredients-title">Used in recipe for this step:</h5>
-        <ul class="step-ingredients-list">${ingredientsHtml}</ul>`;
-      container.appendChild(card);
-    });
-    container.addEventListener('change', e => {
-      if (e.target.tagName === 'SELECT') {
-        const itemId = e.target.dataset.id;
-        const recipeIndex = parseInt(e.target.value, 10);
-        selectedRecipes[itemId] = recipeIndex;
-        saveToLocalStorage('selectedRecipes', selectedRecipes);
-        renderCraftingTab();
-      }
-    });
-  };
 
-  const renderRequiredResources = (rawRequirements) => {
-    const container = document.getElementById('global-requirements-list');
-    container.innerHTML = '';
-    if (Object.keys(rawRequirements).length === 0) {
-      container.innerHTML = '<p>No raw resources required.</p>';
-      return;
-    }
-    Object.entries(rawRequirements).forEach(([id, needed]) => {
-      const item = craftingData[id];
-      if (!item) return;
-      const owned = inventory[id] || 0;
-      const statusClass = owned >= needed ? 'green' : owned > 0 ? 'orange' : 'red';
-      const statusLabel = owned >= needed ? 'From inventory (complete)' : owned > 0 ? 'From inventory (partial)' : 'Missing';
+      const titleImg = `assets/${it.icon}.png`;
+      const titleHtml = `
+        <div class="step-header">
+          <h4 class="step-title">
+            <img src="${titleImg}" alt="${it.name}" width="24" height="24"
+                 loading="lazy" decoding="async"
+                 style="object-fit:contain;border-radius:6px"
+                 onerror="this.onerror=null;this.src='${PH24}'"/>
+            Step ${i + 1}: Craft ${Math.ceil(step.quantityToCraft)}x ${it.name}
+          </h4>
+        </div>`;
+
+      const ingHtml = ingredientsComputed.map(ing=>{
+        const ingItem = craftingData[ing.id]; if (!ingItem) return `<li>Unknown Item</li>`;
+        const statusClass = ing.need === 0 ? 'green' : 'red';
+        const icon = `assets/${ingItem.icon}.png`;
+        // Build a right-hand block with requirement and +/- buttons to adjust inventory
+        const rightBlock = `<div style="margin-left:auto;display:flex;align-items:center;gap:.25rem;">
+          <span class="step-status ${statusClass}">required: ${ing.need}</span>
+          <button class="btn-round btn-minus inv-minus-btn" data-id="${ing.id}" title="Decrease" style="--btn-size:24px;">−</button>
+          <button class="btn-round btn-plus inv-add-btn" data-id="${ing.id}" title="Increase" style="--btn-size:24px;">+</button>
+        </div>`;
+        return `
+          <li style="display:flex;align-items:center;gap:.5rem;">
+            <img src="${icon}" alt="${ingItem.name}" width="24" height="24"
+                 loading="lazy" decoding="async"
+                 style="object-fit:contain;border-radius:6px"
+                 onerror="this.onerror=null;this.src='${PH24}'"/>
+            <span class="ingredient-name">${ingItem.name}</span>
+            ${rightBlock}
+          </li>`;
+      }).join('');
+
+      const card = document.createElement('div');
+      card.className = 'craft-step-card';
+      card.innerHTML = `${titleHtml}${recipeSelectorHtml}
+        <h5 class="ingredients-title">Used in recipe for this step:</h5>
+        <ul class="step-ingredients-list">${ingHtml}</ul>`;
+      c.appendChild(card);
+    });
+  }
+
+  function renderRequiredResources(rawRequirements){
+    const c = document.getElementById('global-requirements-list');
+    if (!c) return;
+    c.innerHTML = '';
+    if (Object.keys(rawRequirements).length === 0){ c.innerHTML = '<p>No raw resources required.</p>'; return; }
+
+    Object.entries(rawRequirements).forEach(([id, needed])=>{
+      const it = craftingData[id]; if (!it) return;
+      const have = inventory[id] || 0;
+      const required = Math.max(0, Math.ceil(needed - have));
+      const statusClass = required === 0 ? 'green' : 'red';
       const card = document.createElement('div');
       card.className = 'requirement-card';
-      const imageUrl = `assets/${item.icon}.png`;
-      const placeholderUrl = `https://placehold.co/40x40/2b2b41/e0e0e0?text=IMG`;
+      // Build a right-hand block containing requirement text and +/- buttons to adjust inventory
+      const rightBlock = `<div style="margin-left:auto;display:flex;align-items:center;gap:.25rem;">
+        <span class="step-status ${statusClass}" style="padding:.2rem .6rem;border-radius:6px;">required: ${required}</span>
+        <button class="btn-round btn-minus req-minus-btn" data-id="${id}" title="Decrease" style="--btn-size:24px;">−</button>
+        <button class="btn-round btn-plus req-add-btn" data-id="${id}" title="Increase" style="--btn-size:24px;">+</button>
+      </div>`;
       card.innerHTML = `
-        <img src="${imageUrl}" alt="${item.name}" onerror="this.onerror=null;this.src='${placeholderUrl}';"/>
-        <div class="item-name">${item.name}</div>
-        <div class="item-quantity">${Math.ceil(owned)} / ${Math.ceil(needed)}</div>
-        <div class="step-status ${statusClass}">${statusLabel}</div>`;
-      container.appendChild(card);
+        <img src="assets/${it.icon}.png" alt="${it.name}" width="40" height="40"
+             loading="lazy" decoding="async" onerror="this.onerror=null;this.src='${PH40}'"/>
+        <div class="item-name">${it.name}</div>
+        ${rightBlock}`;
+      c.appendChild(card);
     });
-  };
-  
-  const renderInventoryUsage = (inventoryUsage) => {
-    const container = document.getElementById('inventory-usage-list');
-    container.innerHTML = '';
-    if (Object.keys(inventoryUsage).length === 0) {
-        container.innerHTML = '<p>No items from your inventory are used for this craft.</p>';
-        return;
+
+    // Bind click handler once to adjust inventory when clicking +/- in required resources
+    if (!c._reqBound){
+      c.addEventListener('click', e => {
+        const btn = e.target.closest('button');
+        if (!btn) return;
+        const id = btn.dataset.id;
+        if (!id) return;
+        const current = inventory[id] || 0;
+        const inc = btn.classList.contains('req-add-btn') || btn.classList.contains('btn-plus');
+        const dec = btn.classList.contains('req-minus-btn') || btn.classList.contains('btn-minus');
+        if (inc) updateInventoryQuantity(id, current + 1);
+        else if (dec) updateInventoryQuantity(id, current - 1);
+      });
+      c._reqBound = true;
     }
+  }
 
-    Object.entries(inventoryUsage).forEach(([id, quantityUsed]) => {
-        const item = craftingData[id];
-        if (!item) return;
-
-        const card = document.createElement('div');
-        card.className = 'requirement-card';
-        const imageUrl = `assets/${item.icon}.png`;
-        const placeholderUrl = `https://placehold.co/40x40/2b2b41/e0e0e0?text=IMG`;
-        
-        card.innerHTML = `
-            <img src="${imageUrl}" alt="${item.name}" onerror="this.onerror=null;this.src='${placeholderUrl}';"/>
-            <div class="item-name">${item.name}</div>
-            <div class="item-quantity">Used: ${Math.ceil(quantityUsed)}</div>
-            <div class="step-status green">From Inventory</div>
-        `;
-        container.appendChild(card);
+  function renderInventory(){
+    const c = document.getElementById('inventory-list');
+    c.innerHTML = '';
+    if (Object.keys(inventory).length === 0){ c.innerHTML = '<p>Your inventory is empty.</p>'; return; }
+    Object.entries(inventory).forEach(([id, qty])=>{
+      const it = craftingData[id]; if (!it || qty <= 0) return;
+      const card = document.createElement('div');
+      card.className = 'inventory-item-card';
+      card.innerHTML = `
+        <img src="assets/${it.icon}.png" alt="${it.name}" width="48" height="48"
+             loading="lazy" decoding="async"
+             onerror="this.onerror=null;this.src='https://placehold.co/64x64/2b2b41/e0e0e0?text=IMG'"/>
+        <div class="item-name">${it.name}</div>
+        <div class="inventory-item-controls">
+          <button data-action="decrease" data-id="${id}" class="btn-round btn-minus" title="Decrease">−</button>
+          <input type="number" value="${qty}" min="0" data-id="${id}"/>
+          <button data-action="increase" data-id="${id}" class="btn-round btn-plus" title="Increase">+</button>
+          <button data-action="remove" data-id="${id}" class="btn-ghost-danger">Remove</button>
+        </div>`;
+      c.appendChild(card);
     });
-  };
 
-  // --- CORE CALCULATION & LOGIC ---
+    if (!c._bound){
+      c.addEventListener('click', handleInventoryUpdate);
+      c.addEventListener('change', handleInventoryUpdate);
+      c._bound = true;
+    }
+  }
+
+  function renderInventoryUsage(inventoryUsage){
+    const c = document.getElementById('inventory-usage-list');
+    if (!c) return;
+    c.innerHTML = '';
+    if (Object.keys(inventoryUsage).length === 0){
+      c.innerHTML = '<p>No items from your inventory are used for this craft.</p>';
+      return;
+    }
+    Object.entries(inventoryUsage).forEach(([id, used])=>{
+      const it = craftingData[id]; if (!it) return;
+      const card = document.createElement('div');
+      card.className = 'requirement-card';
+      card.innerHTML = `
+        <img src="assets/${it.icon}.png" alt="${it.name}" width="40" height="40"
+             loading="lazy" decoding="async" onerror="this.onerror=null;this.src='${PH40}'"/>
+        <div class="item-name">${it.name}</div>
+        <div class="item-quantity">used: ${Math.ceil(used)}</div>
+        <div class="step-status green">from inventory</div>`;
+      c.appendChild(card);
+    });
+  }
+
+  // ==============================
+  //  CORE CALCULATION
+  // ==============================
   function calculateCraftingRequirements() {
-    const rawRequirements = {};
-    const toCraftAggregated = {};
-    const inventoryUsage = {}; 
+    const rawRequirements = {};   // feuilles à collecter (sans recette)
+    const toCraftAggregated = {}; // id -> total à produire (arrondi par maxOut)
+    const inventoryUsage = {};    // id -> combien pris de l’inventaire (global)
     const tempInventory = { ...inventory };
 
-    function recurse(itemId, quantityNeeded, visited = new Set()) {
-      if (visited.has(itemId)) {
-          console.warn(`Cycle detected for item ${itemId}, stopping calculation for this branch.`);
-          return;
-      }
+    function expand(itemId, targetQtyMin, visited = new Set()){
+      if (visited.has(itemId)) return;
       visited.add(itemId);
 
       const item = craftingData[itemId];
       if (!item) return;
 
-      const availableInTemp = tempInventory[itemId] || 0;
-      const canUseFromTemp = Math.min(quantityNeeded, availableInTemp);
-
-      if (canUseFromTemp > 0) {
-          inventoryUsage[itemId] = (inventoryUsage[itemId] || 0) + canUseFromTemp;
-          tempInventory[itemId] -= canUseFromTemp;
-          quantityNeeded -= canUseFromTemp;
+      // consommer inventaire
+      const have = tempInventory[itemId] || 0;
+      const use = Math.min(targetQtyMin, have);
+      if (use > 0){
+        inventoryUsage[itemId] = (inventoryUsage[itemId] || 0) + use;
+        tempInventory[itemId] -= use;
+        targetQtyMin -= use;
       }
+      if (targetQtyMin <= 0) return;
 
-      if (quantityNeeded <= 0) return;
-
-      if (!item.recipes || item.recipes.length === 0) {
-        rawRequirements[itemId] = (rawRequirements[itemId] || 0) + quantityNeeded;
+      // pas de recette -> ressource brute
+      if (!item.recipes || item.recipes.length === 0){
+        rawRequirements[itemId] = (rawRequirements[itemId] || 0) + targetQtyMin;
         return;
       }
-      
+
       let recipeIndex = selectedRecipes[itemId] || 0;
       if (recipeIndex >= item.recipes.length) recipeIndex = 0;
       const recipe = item.recipes[recipeIndex];
       if (!recipe) return;
 
-      const outputPerCraft = getEffectiveOutput(recipe);
-      const craftsNeeded = Math.ceil(quantityNeeded / outputPerCraft);
-      
-      if (craftsNeeded <= 0) return;
-
-      const totalProduced = craftsNeeded * outputPerCraft;
+      const { minOut, maxOut } = getRecipeOutputs(recipe);
+      const craftsNeeded = Math.ceil(targetQtyMin / Math.max(1, maxOut));
+      const totalProduced = craftsNeeded * Math.max(1, maxOut);
       toCraftAggregated[itemId] = (toCraftAggregated[itemId] || 0) + totalProduced;
 
-      for (const ing of recipe.consumed_items) {
-        recurse(ing.id, ing.quantity * craftsNeeded, new Set(visited));
+      for (const ing of recipe.consumed_items || []){
+        const childTargetMin = craftsNeeded * ing.quantity;
+        expand(ing.id, childTargetMin, new Set(visited));
       }
     }
 
-    for (const [itemId, quantity] of Object.entries(craftList)) {
-      recurse(itemId, quantity);
-    }
-    
-    const craftingSteps = Object.entries(toCraftAggregated).map(([id, quantityToCraft]) => {
-      const item = craftingData[id];
-      if (!item) return null;
+    for (const [id, qty] of Object.entries(craftList)) expand(id, qty);
+
+    const craftingSteps = Object.entries(toCraftAggregated).map(([id, qToCraft])=>{
+      const item = craftingData[id]; if (!item) return null;
       let recipeIndex = selectedRecipes[id] || 0;
       if (recipeIndex >= item.recipes.length) recipeIndex = 0;
-      const recipe = item.recipes[recipeIndex];
-      if (!recipe) return null;
-
-      const outputPerCraft = getEffectiveOutput(recipe);
-      const craftsNeeded = Math.ceil(quantityToCraft / outputPerCraft);
-
+      const recipe = item.recipes[recipeIndex]; if (!recipe) return null;
+      const { maxOut } = getRecipeOutputs(recipe);
+      const craftsNeeded = Math.ceil(qToCraft / Math.max(1, maxOut));
       return {
-        id: id,
-        quantityToCraft: quantityToCraft,
-        recipeIndex: recipeIndex,
-        ingredients: recipe.consumed_items.map(ing => ({
+        id,
+        quantityToCraft: qToCraft,
+        recipeIndex,
+        ingredients: (recipe.consumed_items || []).map(ing => ({
           id: ing.id,
           quantityNeeded: ing.quantity * craftsNeeded
         }))
       };
     }).filter(Boolean);
 
-    craftingSteps.sort((a, b) => getCraftingDepth(a.id) - getCraftingDepth(b.id));
-    
+    craftingSteps.sort((a,b)=> getCraftingDepth(a.id) - getCraftingDepth(b.id));
     return { rawRequirements, craftingSteps, inventoryUsage };
   }
 
-  const getCraftingDepth = (itemId, path = new Set()) => {
-      if (path.has(itemId)) return Infinity; 
-      path.add(itemId);
-      const item = craftingData[itemId];
-      if (!item?.recipes?.length) return 0;
-      let recipeIndex = selectedRecipes[itemId] || 0;
-      if (recipeIndex >= item.recipes.length) recipeIndex = 0;
-      const recipe = item.recipes[recipeIndex];
-      if (!recipe || !recipe.consumed_items) return 1;
-      const maxDepth = Math.max(0, ...recipe.consumed_items.map(ing => getCraftingDepth(ing.id, new Set(path))));
-      return 1 + maxDepth;
-  };
-
-  function getEffectiveOutput(recipe) {
-      if (recipe.possibilities && Object.keys(recipe.possibilities).length > 0) {
-          let maxProb = 0;
-          let bestOutcome = recipe.output_quantity || 1;
-          for (const [amount, probability] of Object.entries(recipe.possibilities)) {
-              if (probability > maxProb) {
-                  maxProb = probability;
-                  bestOutcome = parseInt(amount, 10);
-              }
-          }
-          return bestOutcome;
-      }
-      return recipe.output_quantity || 1;
+  function getCraftingDepth(itemId, path = new Set()){
+    if (path.has(itemId)) return Infinity;
+    path.add(itemId);
+    const item = craftingData[itemId];
+    if (!item?.recipes?.length) return 0;
+    let recipeIndex = selectedRecipes[itemId] || 0;
+    if (recipeIndex >= item.recipes.length) recipeIndex = 0;
+    const recipe = item.recipes[recipeIndex];
+    if (!recipe || !recipe.consumed_items) return 1;
+    const maxDepth = Math.max(0, ...recipe.consumed_items.map(ing => getCraftingDepth(ing.id, new Set(path))));
+    return 1 + maxDepth;
   }
 
-  // --- INVENTORY TAB ---
-  const renderInventory = () => {
-    const container = document.getElementById('inventory-list');
+  function getRecipeOutputs(recipe){
+    if (recipe?.possibilities && Object.keys(recipe.possibilities).length > 0){
+      const amounts = Object.keys(recipe.possibilities).map(k=>parseInt(k,10)).filter(Number.isFinite);
+      const minOut = Math.max(0, Math.min(...amounts));
+      const maxOut = Math.max(0, Math.max(...amounts));
+      return { minOut: Math.max(0, minOut), maxOut: Math.max(1, maxOut) };
+    }
+    const q = recipe?.output_quantity || 1;
+    return { minOut: q, maxOut: q };
+  }
+
+  // ==============================
+  //  INVENTORY HANDLERS
+  // ==============================
+  function handleInventoryUpdate(e){
+    const { action, id } = e.target.dataset || {};
+    if (!id) return;
+    const current = parseInt(inventory[id], 10) || 0;
+    if (e.type === 'change') updateInventoryQuantity(id, parseInt(e.target.value, 10));
+    else if (action === 'increase') updateInventoryQuantity(id, current + 1);
+    else if (action === 'decrease') updateInventoryQuantity(id, current - 1);
+    else if (action === 'remove') updateInventoryQuantity(id, 0);
+  }
+
+  // ==============================
+  //  STATE HELPERS
+  // ==============================
+  function addToCraftList(id, q){
+    if (!craftingData[id]) { showMessage(`Error: Item ${id} not found.`, 'error'); return; }
+    craftList[id] = (craftList[id] || 0) + q;
+    saveToLocalStorage('craftList', craftList);
+    showMessage('added', 'success');
+  }
+  function updateCraftQuantity(id, v){
+    const n = parseInt(v, 10);
+    if (isNaN(n) || n <= 0) delete craftList[id];
+    else craftList[id] = n;
+    saveToLocalStorage('craftList', craftList);
+    renderCraftingTab();
+  }
+  function addToInventory(id, q){
+    if (!craftingData[id]) { showMessage(`Error: Item ${id} not found.`, 'error'); return; }
+    inventory[id] = (inventory[id] || 0) + q;
+    saveToLocalStorage('inventory', inventory);
+    showMessage('added', 'success');
+  }
+  function updateInventoryQuantity(id, v){
+    const n = parseInt(v, 10);
+    if (isNaN(n) || n <= 0) delete inventory[id];
+    else inventory[id] = n;
+    saveToLocalStorage('inventory', inventory);
+    if (document.getElementById('inventory')?.classList.contains('active')) renderInventory();
+    if (document.getElementById('craft')?.classList.contains('active')) renderCraftingTab();
+    if (document.getElementById('items-grid')) renderItemsGrid();
+  }
+  function clearCraftList(){
+    if (!confirm('Clear your craft list?')) return;
+    craftList = {}; selectedRecipes = {};
+    saveToLocalStorage('craftList', craftList);
+    saveToLocalStorage('selectedRecipes', selectedRecipes);
+    showMessage('Craft list cleared!', 'success');
+    renderCraftingTab(); if (document.getElementById('items-grid')) renderItemsGrid();
+  }
+  function clearInventory(){
+    if (!confirm('Clear your entire inventory?')) return;
+    inventory = {};
+    saveToLocalStorage('inventory', inventory);
+    showMessage('Inventory cleared!', 'success');
+    renderInventory();
+    if (document.getElementById('craft')?.classList.contains('active')) renderCraftingTab();
+    if (document.getElementById('items-grid')) renderItemsGrid();
+  }
+  function clearLocalStorage(){
+    if (!confirm('This will clear ALL local data (craft list, inventory, settings). Are you sure?')) return;
+    localStorage.clear();
+    craftList = {}; inventory = {}; travelerVisibility = {}; selectedRecipes = {}; travelerLevels = {};
+    showMessage('All local data cleared.', 'success');
+    location.reload();
+  }
+  const saveToLocalStorage = (k, d) => localStorage.setItem(k, JSON.stringify(d));
+
+  // ==============================
+  //  SHARE (modal in-site)
+  // ==============================
+  function wireShareModal(){
+    const modal = document.getElementById('share-modal');
+    if (!modal) return;
+    const linkInput   = modal.querySelector('#share-link');
+    const codeInput   = modal.querySelector('#share-code');
+    const copyLinkBtn = modal.querySelector('#copy-share-link');
+    const openBtn     = modal.querySelector('#open-share-link');
+    const closeBtn    = modal.querySelector('#close-share-modal');
+    const viewBtn     = modal.querySelector('#view-share-data');
+    const dataView    = modal.querySelector('#share-data-view');
+
+    const copy = (t) => navigator.clipboard.writeText(t)
+      .then(()=>showMessage('Copied!', 'success'))
+      .catch(()=>showMessage('Copy failed. Select & Ctrl+C.', 'error'));
+
+    if (copyLinkBtn) copyLinkBtn.onclick = () => copy(linkInput.value);
+    if (openBtn) openBtn.onclick = (e)=>{ e.preventDefault(); window.open(linkInput.value, '_blank'); };
+    if (closeBtn) closeBtn.onclick = ()=>{ modal.classList.remove('open'); modal.setAttribute('aria-hidden','true'); };
+
+    // Show decoded contents of the share payload when the user clicks "View Data". This
+    // decodes the Base64 in the share-code input, then renders a list of items and
+    // quantities for either craft lists or inventories. If the view is currently
+    // visible, clicking again hides it.
+    if (viewBtn && dataView) {
+      viewBtn.onclick = () => {
+        const code = codeInput.value.trim();
+        if (!code) { showMessage('No data to view.', 'info'); return; }
+        // Toggle off if already visible
+        if (dataView.style.display !== 'none') {
+          dataView.style.display = 'none';
+          return;
+        }
+        let data;
+        try {
+          data = JSON.parse(atob(code));
+        } catch (err) {
+          console.error(err);
+          showMessage('Invalid encoded data.', 'error');
+          return;
+        }
+        // Determine whether this is a craft or inventory payload
+        const list = data?.list || {};
+        const inv  = data?.inv || {};
+        let html = '';
+        // helper to format entries
+        const formatEntries = (entries) => {
+          return Object.entries(entries).map(([id,q]) => {
+            const it = craftingData[id];
+            const name = it ? it.name : `#${id}`;
+            return `<li style="margin:.15rem 0">${name}: <strong>${q}</strong></li>`;
+          }).join('');
+        };
+        if (Object.keys(list).length > 0) {
+          html += '<strong>Craft List:</strong><ul style="margin:.25rem 0 .5rem;padding-left:1.25rem">' + formatEntries(list) + '</ul>';
+        }
+        if (Object.keys(inv).length > 0) {
+          html += '<strong>Inventory:</strong><ul style="margin:.25rem 0;padding-left:1.25rem">' + formatEntries(inv) + '</ul>';
+        }
+        if (!html) {
+          html = '<em>No items found.</em>';
+        }
+        dataView.innerHTML = html;
+        dataView.style.display = 'block';
+      };
+    }
+  }
+  function openShareModal(url, code){
+    const modal = document.getElementById('share-modal'); if (!modal) return;
+    modal.querySelector('#share-link').value = url;
+    modal.querySelector('#share-code').value = code;
+    modal.classList.add('open'); modal.setAttribute('aria-hidden','false');
+    const onBackdrop = (e)=>{ if (e.target === modal){ modal.classList.remove('open'); modal.setAttribute('aria-hidden','true'); modal.removeEventListener('click', onBackdrop);} };
+    modal.addEventListener('click', onBackdrop, { once:true });
+    const onEsc = (e)=>{ if (e.key === 'Escape'){ modal.classList.remove('open'); modal.setAttribute('aria-hidden','true'); window.removeEventListener('keydown', onEsc);} };
+    window.addEventListener('keydown', onEsc, { once:true });
+  }
+  function shareViaLink(kind){
+    let payload;
+    if (kind === 'craft') payload = { list: craftList, recipes: selectedRecipes };
+    else if (kind === 'inventory') payload = { inv: inventory };
+    else return;
+    const base = `${location.origin}${location.pathname}`;
+    const encoded = btoa(JSON.stringify(payload));
+    const param = kind === 'craft' ? 'craft' : 'inventory';
+    const url = `${base}?${param}=${encodeURIComponent(encoded)}`;
+    openShareModal(url, encoded);
+  }
+
+  // ==============================
+  //  IMPORT VIA URL
+  // ==============================
+  function tryImportFromURL(){
+    const p = new URLSearchParams(location.search);
+    const craftCode = p.get('craft');
+    const invCode = p.get('inventory');
+    if (craftCode){ handleImportPayload(craftCode, 'craft'); history.replaceState({}, '', location.pathname); }
+    else if (invCode){ handleImportPayload(invCode, 'inventory'); history.replaceState({}, '', location.pathname); }
+  }
+  function handleImportPayload(codeOrURL, kind){
+    let encoded = codeOrURL.trim();
+    try {
+      const u = new URL(encoded);
+      const sp = new URLSearchParams(u.search);
+      if (sp.get('craft')) { encoded = sp.get('craft'); kind = 'craft'; }
+      if (sp.get('inventory')) { encoded = sp.get('inventory'); kind = 'inventory'; }
+    } catch {}
+    let data;
+    try { data = JSON.parse(atob(encoded)); }
+    catch(e){ showMessage('Invalid or corrupted import code.', 'error'); console.error(e); return; }
+
+    const modal = document.getElementById('link-import-modal');
+    if (modal) openLinkImportModal(kind, data);
+    else {
+      const merge = confirm(`Import ${kind} — OK = Merge, Cancel = Replace`);
+      doImport(kind, data, merge ? 'merge' : 'replace');
+    }
+  }
+  function openLinkImportModal(kind, data){
+    const modal = document.getElementById('link-import-modal'); if (!modal) return;
+    const details = modal.querySelector('#import-details');
+    const title = modal.querySelector('#import-title');
+    const summary = modal.querySelector('#import-summary');
+    const mergeBtn = modal.querySelector('#merge-import');
+    const replaceBtn = modal.querySelector('#replace-import');
+    const cancelBtn = modal.querySelector('#cancel-import');
+
+    title.textContent = kind === 'inventory' ? 'Import Inventory' : 'Import Craft List';
+    const incoming = (kind === 'inventory') ? (data?.inv || {}) : (data?.list || {});
+    const current  = (kind === 'inventory') ? inventory : craftList;
+
+    // Set default import target radio buttons based on kind
+    const targetCraftRadio = modal.querySelector('#import-target-craft');
+    const targetInvRadio   = modal.querySelector('#import-target-inventory');
+    if (targetCraftRadio && targetInvRadio){
+      targetCraftRadio.checked = (kind === 'craft');
+      targetInvRadio.checked   = (kind === 'inventory');
+    }
+
+    // Function to update the details section based on a selected target (craft or inventory)
+    function updateDetails(targetKind){
+      // Determine the incoming items: if the user chooses to import into inventory,
+      // use whatever exists in data.inv (or data.list) and vice‑versa for craft. This
+      // allows cross‑imports (e.g. import an inventory list into the craft tab).
+      const incomingItems = targetKind === 'inventory'
+        ? (data.inv || data.list || {})
+        : (data.list || data.inv || {});
+      // Determine current items from whichever list the user selected as target
+      const currentItems = targetKind === 'inventory' ? inventory : craftList;
+      // Compute simple diff rows (limit to first 10 for brevity)
+      const allKeys = Array.from(new Set([...Object.keys(incomingItems), ...Object.keys(currentItems)]));
+      const diffRows = [];
+      for (const id of allKeys){
+        const cur = currentItems[id] || 0;
+        const inc = incomingItems[id] || 0;
+        if (cur === 0 && inc > 0){ diffRows.push([id,'added',cur,inc]); }
+        else if (cur > 0 && inc === 0){ diffRows.push([id,'removed',cur,inc]); }
+        else if (cur !== inc){ diffRows.push([id,'updated',cur,inc]); }
+      }
+      const top10 = diffRows.slice(0,10).map(([id,type,cur,inc]) => {
+        const it = craftingData[id];
+        const name = it ? it.name : `#${id}`;
+        return `<div style="display:flex;gap:.5rem;align-items:center;padding:.25rem 0;border-bottom:1px dashed var(--accent)">
+          <span style="min-width:72px;text-transform:capitalize">${type}</span>
+          <span style="flex:1">${name}</span>
+          <span style="opacity:.8">${cur} → ${inc}</span>
+        </div>`;
+      }).join('');
+      const count = Object.keys(incomingItems).length;
+      // Update summary: inform the user how many items were found and ask how to import
+      summary.textContent = `Found ${count} item${count !== 1 ? 's' : ''} in the incoming ${targetKind}. Choose how to import it.`;
+      // Show up to 10 difference rows or leave blank if there are no differences
+      details.innerHTML = diffRows.length ? top10 : '';
+    }
+
+    // Initial render of details using default kind
+    updateDetails(kind);
+
+    // When the user toggles import target, update details accordingly. Attach a single
+    // change handler to the radio group. We avoid multiple listeners on each radio
+    // to ensure the correct currently checked value is used.
+    const group = modal.querySelector('.import-target');
+    if (group && !group._bound) {
+      group.addEventListener('change', () => {
+        // Read which radio is currently checked
+        const selected = modal.querySelector('input[name="import-target"]:checked');
+        const targetKind = selected ? selected.value : kind;
+        updateDetails(targetKind);
+      });
+      group._bound = true;
+    }
+
+    const onClose = ()=>{ modal.classList.remove('open'); modal.setAttribute('aria-hidden','true'); };
+    mergeBtn.onclick = ()=>{
+      const selected = modal.querySelector('input[name="import-target"]:checked');
+      const targetKind = selected ? selected.value : kind;
+      doImport(targetKind, data, 'merge');
+      onClose();
+    };
+    replaceBtn.onclick = ()=>{
+      const selected = modal.querySelector('input[name="import-target"]:checked');
+      const targetKind = selected ? selected.value : kind;
+      doImport(targetKind, data, 'replace');
+      onClose();
+    };
+    cancelBtn.onclick = onClose;
+
+    modal.classList.add('open'); modal.setAttribute('aria-hidden','false');
+    modal.addEventListener('click', (e)=>{ if (e.target === modal) onClose(); }, { once:true });
+    window.addEventListener('keydown', (e)=>{ if (e.key === 'Escape') onClose(); }, { once:true });
+  }
+  function doImport(kind, data, mode){
+    // When importing, allow user to choose target (craft or inventory). The payload
+    // might originate from either a craft share (data.list + data.recipes) or an
+    // inventory share (data.inv). We normalise accordingly.
+    if (kind === 'craft'){
+      const incomingList = data.list || data.inv || {};
+      if (mode === 'merge'){
+        for (const [id,q] of Object.entries(incomingList)){
+          craftList[id] = (craftList[id] || 0) + (q || 0);
+        }
+        // When merging into craft, preserve selectedRecipes and merge new recipes if present
+        if (data.recipes) selectedRecipes = { ...data.recipes, ...selectedRecipes };
+      } else {
+        craftList = { ...incomingList };
+        // Only set selectedRecipes if provided in payload; otherwise reset
+        selectedRecipes = data.recipes || {};
+      }
+      saveToLocalStorage('craftList', craftList);
+      saveToLocalStorage('selectedRecipes', selectedRecipes);
+      renderCraftingTab();
+      showMessage('Craft list imported!', 'success');
+      switchTab('craft');
+    } else {
+      const incoming = data.inv || data.list || {};
+      if (mode === 'merge'){
+        for (const [id,q] of Object.entries(incoming)){
+          inventory[id] = (inventory[id] || 0) + (q || 0);
+        }
+      } else {
+        inventory = { ...incoming };
+      }
+      saveToLocalStorage('inventory', inventory);
+      renderInventory();
+      if (document.getElementById('craft')?.classList.contains('active')) renderCraftingTab();
+      showMessage('Inventory imported!', 'success');
+      switchTab('inventory');
+    }
+  }
+
+  /**
+   * Export all relevant local storage data to a JSON file. The file will
+   * include craft lists, inventory, selected recipes, traveler settings and
+   * saved plans. A download will be triggered with a timestamped filename.
+   */
+  function exportLocalStorageData(){
+    try {
+      const data = {
+        craftList,
+        inventory,
+        selectedRecipes,
+        travelerVisibility,
+        travelerLevels,
+        craftPlans,
+        inventoryPlans
+      };
+      const json = JSON.stringify(data, null, 2);
+      const blob = new Blob([json], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const ts = new Date().toISOString().replace(/[:.]/g, '-');
+      a.download = `bitcraft-localstorage-${ts}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      showMessage('Local storage exported!', 'success');
+    } catch (err) {
+      console.error(err);
+      showMessage('Export failed.', 'error');
+    }
+  }
+
+  /**
+   * Handle file selection for importing local storage data. Reads the JSON
+   * file provided by the user, validates its structure, then applies it to
+   * the current local state and reloads the page.
+   */
+  function handleLocalStorageImport(e){
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const data = JSON.parse(ev.target.result);
+        if (typeof data !== 'object' || data === null) throw new Error('Invalid data');
+        craftList = data.craftList || {};
+        inventory = data.inventory || {};
+        selectedRecipes = data.selectedRecipes || {};
+        travelerVisibility = data.travelerVisibility || {};
+        travelerLevels = data.travelerLevels || {};
+        craftPlans = data.craftPlans || {};
+        inventoryPlans = data.inventoryPlans || {};
+        // Persist to localStorage
+        saveToLocalStorage('craftList', craftList);
+        saveToLocalStorage('inventory', inventory);
+        saveToLocalStorage('selectedRecipes', selectedRecipes);
+        saveToLocalStorage('travelerVisibility', travelerVisibility);
+        saveToLocalStorage('travelerLevels', travelerLevels);
+        saveToLocalStorage('craftPlans', craftPlans);
+        saveToLocalStorage('inventoryPlans', inventoryPlans);
+        showMessage('Local storage imported!', 'success');
+        // Reload page to apply changes everywhere
+        setTimeout(() => location.reload(), 600);
+      } catch (err) {
+        console.error(err);
+        showMessage('Invalid JSON file.', 'error');
+      }
+    };
+    reader.readAsText(file);
+  }
+
+  /**
+   * Open a modal showing the contents of a saved plan. The plan is passed
+   * as a simple object mapping item IDs to quantities. The second argument
+   * indicates the kind (craft or inventory) and is used for the title.
+   */
+  function openPlanViewModal(listObj, kind){
+    const modal = document.getElementById('plan-view-modal');
+    if (!modal) return;
+    const content = modal.querySelector('#plan-view-content');
+    const titleEl = modal.querySelector('#plan-view-title');
+    // Build title based on kind
+    titleEl.textContent = kind === 'inventory' ? 'Inventory Plan' : 'Craft Plan';
+    // Build HTML list of items
+    const entries = Object.entries(listObj || {});
+    if (entries.length === 0){
+      content.innerHTML = '<p><em>No items in this plan.</em></p>';
+    } else {
+      const itemsHtml = entries.map(([id, q]) => {
+        const it = craftingData[id];
+        const name = it ? it.name : `#${id}`;
+        return `<li style="margin:.15rem 0">${name}: <strong>${q}</strong></li>`;
+      }).join('');
+      content.innerHTML = `<ul style="padding-left:1.25rem;margin:0">${itemsHtml}</ul>`;
+    }
+    // Show modal
+    modal.classList.add('open');
+    modal.setAttribute('aria-hidden','false');
+    // Close handler
+    const closeBtn = modal.querySelector('#close-plan-view');
+    const onClose = () => {
+      modal.classList.remove('open');
+      modal.setAttribute('aria-hidden','true');
+    };
+    if (closeBtn) closeBtn.onclick = onClose;
+    // Click outside to close
+    modal.addEventListener('click', (e) => { if (e.target === modal) onClose(); }, { once:true });
+    // Escape key to close
+    window.addEventListener('keydown', (e) => { if (e.key === 'Escape') onClose(); }, { once:true });
+  }
+  // =========================================
+  // PLAN HANDLING (Craft and Inventory)
+  // =========================================
+
+  /**
+   * Render the list of saved craft plans into the plans list container. Each
+   * plan card shows its name, a simple summary (# of items) and actions to
+   * merge, replace or delete the plan. Clicking on the action buttons is
+   * delegated to handleCraftPlanClick().
+   */
+  function renderCraftPlans(){
+    const container = document.getElementById('plans-list');
+    if (!container) return;
     container.innerHTML = '';
-    if (Object.keys(inventory).length === 0) {
-      container.innerHTML = '<p>Your inventory is empty.</p>';
+    const names = Object.keys(craftPlans);
+    if (names.length === 0){
+      container.innerHTML = '<p style="opacity:.8;">No saved plans.</p>';
       return;
     }
-    Object.entries(inventory).forEach(([id, quantity]) => {
-      const item = craftingData[id];
-      if (!item || quantity <= 0) return;
+    names.forEach(name => {
+      const plan = craftPlans[name];
+      const itemCount = Object.keys(plan.list || {}).length;
       const card = document.createElement('div');
-      card.className = 'inventory-item-card';
-      const imageUrl = `assets/${item.icon}.png`;
-      const placeholderUrl = `https://placehold.co/64x64/2b2b41/e0e0e0?text=IMG`;
+      card.className = 'plan-card';
+      card.dataset.name = name;
       card.innerHTML = `
-        <img src="${imageUrl}" alt="${item.name}" onerror="this.onerror=null;this.src='${placeholderUrl}';"/>
-        <div class="item-name">${item.name}</div>
-        <div class="inventory-item-controls">
-          <button data-action="decrease" data-id="${id}">-</button>
-          <input type="number" value="${quantity}" min="0" data-id="${id}"/>
-          <button data-action="increase" data-id="${id}">+</button>
-          <button data-action="remove" data-id="${id}">Remove</button>
+        <div>
+          <div class="plan-name">${name}</div>
+          <div class="plan-meta">${itemCount} item${itemCount !== 1 ? 's' : ''}</div>
+        </div>
+        <div class="plan-actions">
+          <button data-action="view" data-name="${name}">View</button>
+          <button data-action="share" data-name="${name}">Share</button>
+          <button data-action="merge" data-name="${name}">Merge</button>
+          <button data-action="replace" data-name="${name}">Replace</button>
+          <button data-action="delete" data-name="${name}">Delete</button>
         </div>`;
       container.appendChild(card);
     });
-    container.addEventListener('click', handleInventoryUpdate);
-    container.addEventListener('change', handleInventoryUpdate);
-  };
+  }
 
-  const handleInventoryUpdate = (e) => {
-      const { action, id } = e.target.dataset;
-      if (!id) return;
-      const quantity = parseInt(inventory[id], 10) || 0;
-      if (e.type === 'change') {
-          updateInventoryQuantity(id, parseInt(e.target.value, 10));
-      } else if (action === 'increase') {
-          updateInventoryQuantity(id, quantity + 1);
-      } else if (action === 'decrease') {
-          updateInventoryQuantity(id, quantity - 1);
-      } else if (action === 'remove') {
-          updateInventoryQuantity(id, 0);
+  /**
+   * Handle click events on craft plan action buttons. Determines the action
+   * based on the data-action attribute and invokes the corresponding
+   * operation (merge, replace or delete) on the selected plan.
+   */
+  function handleCraftPlanClick(e){
+    const btn = e.target.closest('button');
+    if (!btn) return;
+    const action = btn.dataset.action;
+    const name = btn.dataset.name;
+    if (!action || !name) return;
+    const plan = craftPlans[name];
+    if (!plan) { showMessage('Plan not found.', 'error'); return; }
+    if (action === 'view'){
+      // Show contents of this craft plan
+      openPlanViewModal(plan.list || {}, 'craft');
+      return;
+    } else if (action === 'share'){
+      // Share this craft plan: generate a share link/code and open share modal
+      const payload = { list: { ...plan.list }, recipes: { ...plan.recipes } };
+      const encoded = btoa(JSON.stringify(payload));
+      const base = `${location.origin}${location.pathname}`;
+      const url = `${base}?craft=${encodeURIComponent(encoded)}`;
+      openShareModal(url, encoded);
+      return;
+    } else if (action === 'delete'){
+      if (!confirm(`Delete plan \"${name}\"?`)) return;
+      delete craftPlans[name];
+      localStorage.setItem('craftPlans', JSON.stringify(craftPlans));
+      renderCraftPlans();
+      showMessage('Plan deleted.', 'success');
+    } else if (action === 'merge' || action === 'replace'){
+      // Apply plan to craftList
+      if (action === 'replace'){
+        craftList = { ...plan.list };
+        selectedRecipes = { ...plan.recipes };
+      } else {
+        // merge: add quantities
+        for (const [id, q] of Object.entries(plan.list || {})){
+          craftList[id] = (craftList[id] || 0) + q;
+        }
+        // merge recipes – prefer existing recipe if present
+        selectedRecipes = { ...plan.recipes, ...selectedRecipes };
       }
-  };
-
-  // --- DATA MANIPULATION & STORAGE ---
-  const addToCraftList = (id, quantity) => {
-    const item = craftingData[id];
-    if (!item) {
-        showMessage(`Error: Item with ID ${id} not found.`, 'error');
-        return;
-    }
-    craftList[id] = (craftList[id] || 0) + quantity;
-    saveToLocalStorage('craftList', craftList);
-    showMessage(`Added ${quantity}x ${item.name} to craft list.`, 'success');
-  };
-  
-  const updateCraftQuantity = (id, value) => {
-    const quantity = parseInt(value, 10);
-    if (isNaN(quantity) || quantity <= 0) {
-      delete craftList[id];
-    } else {
-      craftList[id] = quantity;
-    }
-    saveToLocalStorage('craftList', craftList);
-    renderCraftingTab();
-  };
-  
-  const addToInventory = (id, quantity) => {
-    const item = craftingData[id];
-    if (!item) {
-        showMessage(`Error: Item with ID ${id} not found.`, 'error');
-        return;
-    }
-    inventory[id] = (inventory[id] || 0) + quantity;
-    saveToLocalStorage('inventory', inventory);
-    showMessage(`Added ${quantity}x ${item.name} to inventory.`, 'success');
-  };
-
-  const updateInventoryQuantity = (id, value) => {
-    const quantity = parseInt(value, 10);
-    if (isNaN(quantity) || quantity <= 0) {
-      delete inventory[id];
-    } else {
-      inventory[id] = quantity;
-    }
-    saveToLocalStorage('inventory', inventory);
-    renderInventory();
-    if (document.getElementById('craft').classList.contains('active')) {
-      renderCraftingTab();
-    }
-  };
-
-  const clearCraftList = () => {
-    if (confirm('Are you sure you want to clear your craft list?')) {
-      craftList = {};
-      selectedRecipes = {};
-      saveToLocalStorage('craftList', craftList);
-      saveToLocalStorage('selectedRecipes', selectedRecipes);
-      showMessage('Craft list cleared!', 'success');
-      renderCraftingTab();
-    }
-  };
-
-  const clearInventory = () => {
-    if (confirm('Are you sure you want to clear your entire inventory?')) {
-      inventory = {};
-      saveToLocalStorage('inventory', inventory);
-      showMessage('Inventory cleared!', 'success');
-      renderInventory();
-    }
-  };
-
-// --- SHARING HELPERS ---
-function generateShareableLink(type, dataObject) {
-  const payload = btoa(JSON.stringify(dataObject));
-  const baseUrl = window.location.origin + window.location.pathname;
-  const url = new URL(baseUrl);
-  url.searchParams.set(type, payload);
-  return url.toString();
-}
-
-function showImportOptionsMenu(type, data) {
-  const modal = document.createElement('div');
-  modal.className = 'import-modal';
-  modal.innerHTML = `
-    <div class="import-modal-content">
-      <h2>Import ${type === 'craft' ? 'Craft List' : 'Inventory'}?</h2>
-      <p>Select what you want to do with the shared data:</p>
-      <div class="import-buttons">
-        ${type === 'inventory' ? `
-          <button id="import-${type}-replace">Replace</button>
-          <button id="import-${type}-merge">Merge</button>
-        ` : `
-          <button id="import-${type}-confirm">Import</button>
-        `}
-        <button id="import-${type}-cancel">Cancel</button>
-      </div>
-    </div>
-  `;
-  document.body.appendChild(modal);
-
-  const cleanup = () => {
-    modal.remove();
-    history.replaceState({}, document.title, window.location.pathname);
-  };
-
-  // Close when clicking outside
-  modal.addEventListener('click', e => {
-    if (e.target === modal) cleanup();
-  });
-
-  // Close with Escape key
-  document.addEventListener('keydown', function escHandler(e) {
-    if (e.key === 'Escape') {
-      cleanup();
-      document.removeEventListener('keydown', escHandler);
-    }
-  });
-
-  if (type === 'inventory') {
-    modal.querySelector(`#import-${type}-replace`).addEventListener('click', () => {
-      inventory = data;
-      saveToLocalStorage('inventory', inventory);
-      renderInventory();
-      showMessage('Inventory replaced.', 'success');
-      cleanup();
-    });
-    modal.querySelector(`#import-${type}-merge`).addEventListener('click', () => {
-      for (const [id, qty] of Object.entries(data)) {
-        inventory[id] = (inventory[id] || 0) + qty;
-      }
-      saveToLocalStorage('inventory', inventory);
-      renderInventory();
-      showMessage('Inventory merged.', 'success');
-      cleanup();
-    });
-  } else {
-    modal.querySelector(`#import-${type}-confirm`).addEventListener('click', () => {
-      craftList = data.list || {};
-      selectedRecipes = data.recipes || {};
       saveToLocalStorage('craftList', craftList);
       saveToLocalStorage('selectedRecipes', selectedRecipes);
       renderCraftingTab();
-      showMessage('Craft list imported.', 'success');
-      cleanup();
+      renderCraftPlans();
+      showMessage(`Plan \"${name}\" applied (${action}).`, 'success');
+      switchTab('craft');
+    }
+  }
+
+  /**
+   * Render the list of saved inventory plans into the inv-plans-list container.
+   */
+  function renderInventoryPlans(){
+    const container = document.getElementById('inv-plans-list');
+    if (!container) return;
+    container.innerHTML = '';
+    const names = Object.keys(inventoryPlans);
+    if (names.length === 0){
+      container.innerHTML = '<p style="opacity:.8;">No saved plans.</p>';
+      return;
+    }
+    names.forEach(name => {
+      const plan = inventoryPlans[name];
+      const itemCount = Object.keys(plan.inv || {}).length;
+      const card = document.createElement('div');
+      card.className = 'plan-card';
+      card.dataset.name = name;
+      card.innerHTML = `
+        <div>
+          <div class="plan-name">${name}</div>
+          <div class="plan-meta">${itemCount} item${itemCount !== 1 ? 's' : ''}</div>
+        </div>
+        <div class="plan-actions">
+          <button data-action="view" data-name="${name}">View</button>
+          <button data-action="share" data-name="${name}">Share</button>
+          <button data-action="merge" data-name="${name}">Merge</button>
+          <button data-action="replace" data-name="${name}">Replace</button>
+          <button data-action="delete" data-name="${name}">Delete</button>
+        </div>`;
+      container.appendChild(card);
     });
   }
 
-  modal.querySelector(`#import-${type}-cancel`).addEventListener('click', cleanup);
-}
-
-function handleSharedDataFromURL() {
-  const params = new URLSearchParams(window.location.search);
-  const craftDataEncoded = params.get('craft');
-  const inventoryDataEncoded = params.get('inventory');
-  if (craftDataEncoded) {
-    try {
-      const decoded = JSON.parse(atob(craftDataEncoded));
-      showImportOptionsMenu('craft', decoded);
-    } catch (e) {
-      console.error('Failed to parse shared craft data:', e);
-    }
-  }
-  if (inventoryDataEncoded) {
-    try {
-      const decoded = JSON.parse(atob(inventoryDataEncoded));
-      showImportOptionsMenu('inventory', decoded);
-    } catch (e) {
-      console.error('Failed to parse shared inventory data:', e);
-    }
-  }
-}
-
-// Inject button logic for export
-function addExportButtons() {
-  const craftShareBtn = document.getElementById('share-craft-list-btn');
-  if (craftShareBtn) {
-    craftShareBtn.addEventListener('click', () => {
-      if (Object.keys(craftList).length === 0) {
-        showMessage('Craft list is empty.', 'info');
-        return;
+  /**
+   * Handle click events on inventory plan action buttons.
+   */
+  function handleInventoryPlanClick(e){
+    const btn = e.target.closest('button');
+    if (!btn) return;
+    const action = btn.dataset.action;
+    const name = btn.dataset.name;
+    if (!action || !name) return;
+    const plan = inventoryPlans[name];
+    if (!plan) { showMessage('Plan not found.', 'error'); return; }
+    if (action === 'view'){
+      openPlanViewModal(plan.inv || {}, 'inventory');
+      return;
+    } else if (action === 'share'){
+      // Share this inventory plan: encode and open share modal
+      const payload = { inv: { ...plan.inv } };
+      const encoded = btoa(JSON.stringify(payload));
+      const base = `${location.origin}${location.pathname}`;
+      const url = `${base}?inventory=${encodeURIComponent(encoded)}`;
+      openShareModal(url, encoded);
+      return;
+    } else if (action === 'delete'){
+      if (!confirm(`Delete plan \"${name}\"?`)) return;
+      delete inventoryPlans[name];
+      localStorage.setItem('inventoryPlans', JSON.stringify(inventoryPlans));
+      renderInventoryPlans();
+      showMessage('Plan deleted.', 'success');
+    } else if (action === 'merge' || action === 'replace'){
+      if (action === 'replace'){
+        inventory = { ...plan.inv };
+      } else {
+        // merge: sum quantities
+        for (const [id, q] of Object.entries(plan.inv || {})){
+          inventory[id] = (inventory[id] || 0) + q;
+        }
       }
-      const url = generateShareableLink('craft', { list: craftList, recipes: selectedRecipes });
-      navigator.clipboard.writeText(url).then(() => showMessage('Craft list URL copied!', 'success'));
-    });
-  }
-
-  const inventoryShareBtn = document.getElementById('share-inventory-btn');
-  if (inventoryShareBtn) {
-    inventoryShareBtn.addEventListener('click', () => {
-      if (Object.keys(inventory).length === 0) {
-        showMessage('Inventory is empty.', 'info');
-        return;
-      }
-      const url = generateShareableLink('inventory', inventory);
-      navigator.clipboard.writeText(url).then(() => showMessage('Inventory URL copied!', 'success'));
-    });
-  }
-}
-
-// Run this after DOM is loaded and setup
-handleSharedDataFromURL();
-addExportButtons();
-// --- sharing buttons  end---
-
-  // --- UTILITY ---
-
-  const clearLocalStorage = () => {
-    if (confirm('This will clear ALL data (craft list, inventory, settings). Are you sure?')) {
-      localStorage.clear();
-      craftList = {};
-      inventory = {};
-      travelerVisibility = {};
-      selectedRecipes = {};
-      showMessage('All local data cleared.', 'success');
-      document.location.reload();
+      saveToLocalStorage('inventory', inventory);
+      renderInventory();
+      if (document.getElementById('craft')?.classList.contains('active')) renderCraftingTab();
+      renderInventoryPlans();
+      showMessage(`Plan \"${name}\" applied (${action}).`, 'success');
+      switchTab('inventory');
     }
-  };
-
-  const saveToLocalStorage = (key, data) => {
-    localStorage.setItem(key, JSON.stringify(data));
-  };
-
-  let messageTimeout;
-  const showMessage = (message, type = 'info') => {
-    const infoBox = document.getElementById('global-info-message');
-    infoBox.textContent = message;
-    infoBox.className = `global-info-message ${type} show`;
-    clearTimeout(messageTimeout);
-    messageTimeout = setTimeout(() => {
-      infoBox.classList.remove('show');
-    }, 4000);
-  };
-
-  function showLoadingScreen(show) {
-    let screen = document.getElementById('loading-screen');
-    if (!screen) {
-      screen = document.createElement('div');
-      screen.id = 'loading-screen';
-      screen.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.8);color:white;display:flex;align-items:center;justify-content:center;z-index:9999;';
-      screen.innerHTML = '<div class="loading-text">Loading...</div>';
-      document.body.appendChild(screen);
-    }
-    screen.style.display = show ? 'flex' : 'none';
   }
 
-  // --- START THE APP ---
+  // ==============================
+  //  BOOT
+  // ==============================
   init();
+
+  // ==============================
+  //  SMALL UI HELPERS
+  // ==============================
+  function showMessage(text, type='info'){
+    const el = document.getElementById('global-info-message');
+    if (!el) return;
+    el.textContent = text;
+    el.className = `global-info-message show ${type}`;
+    setTimeout(()=> el.classList.remove('show'), 1600);
+  }
 });
