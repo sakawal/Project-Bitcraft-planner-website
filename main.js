@@ -115,14 +115,14 @@ document.addEventListener('DOMContentLoaded', () => {
       populateFilters();
       renderTravelerFilterButtons();
 
-      const activeTab = localStorage.getItem('activeTab') || 'travelers';
+      const activeTab = 'home'; // add this before 'home' to keep last tab opened when comeback to website -> localStorage.getItem('activeTab') || 
       switchTab(activeTab);
 
       // Render saved plans at startup
       renderCraftPlans();
       renderInventoryPlans();
 
-      // Auto-import ?craft=... ou ?inventory=...
+      // Auto-import ?craft=... ou ?inventory=... on open link
       tryImportFromURL();
 
       showMessage('Data loaded successfully!', 'success');
@@ -158,7 +158,7 @@ document.addEventListener('DOMContentLoaded', () => {
       window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && settingsModal.classList.contains('active')) close(); });
     }
 
-    // Danger zone
+    // Clear storage, in settings
     const deleteCacheBtn = document.getElementById('delete-cache-btn');
     if (deleteCacheBtn) deleteCacheBtn.addEventListener('click', clearLocalStorage);
 
@@ -280,6 +280,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // ==============================
   //  ITEMS TAB
   // ==============================
+
   function populateFilters(){
     const tierSel = document.getElementById('items-tier-filter');
     const tagSel = document.getElementById('items-tag-filter');
@@ -348,7 +349,6 @@ document.addEventListener('DOMContentLoaded', () => {
       const card = document.createElement('div');
       card.className = 'item-card';
       card.dataset.id = id;
-      // Card HTML without the top badges; integrate counts into action buttons
       card.innerHTML = `
         <img src="${img}" alt="${item.name}" width="64" height="64"
              loading="lazy" decoding="async"
@@ -389,7 +389,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (target.classList.contains('add-to-craft-btn')) addToCraftList(id, q);
       else addToInventory(id, q);
 
-      // Refresh badges tout de suite
+      // Refresh numbers when adding/removing items
       renderItemsGrid();
       if (document.getElementById('craft')?.classList.contains('active')) renderCraftingTab();
       if (document.getElementById('inventory')?.classList.contains('active')) renderInventory();
@@ -409,36 +409,41 @@ document.addEventListener('DOMContentLoaded', () => {
   // ==============================
   //  TRAVELERS
   // ==============================
-  function getTravelerLevel(name){
-    const v = travelerLevels?.[name];
-    const n = parseInt(v, 10);
-    return Number.isFinite(n) && n >= 1 ? n : 1;
-  }
-  function saveTravelerLevel(name, lvl){
-    const n = Math.max(1, parseInt(lvl, 10) || 1);
-    travelerLevels[name] = n;
-    saveToLocalStorage('travelerLevels', travelerLevels);
-    return n;
-  }
 
-  function renderTravelerFilterButtons(){
-    const c = document.getElementById('traveler-filter-buttons');
-    if (!c) return;
-    c.innerHTML = '';
-    travelersData.forEach(t => {
-      travelerVisibility[t.name] = travelerVisibility[t.name] ?? true;
-      const b = document.createElement('button');
-      b.textContent = t.name;
-      b.className = `traveler-filter-btn ${travelerVisibility[t.name] ? 'active' : ''}`;
-      b.addEventListener('click', () => {
-        travelerVisibility[t.name] = !travelerVisibility[t.name];
-        saveToLocalStorage('travelerVisibility', travelerVisibility);
-        renderTravelerFilterButtons();
-        filterAndRenderTravelers();
-      });
-      c.appendChild(b);
+  // Get the level of a traveler, defaulting to 1 if not set or invalid (User cant set level above 100, if user do, so it goes to max -> 100)
+  function getTravelerLevel(name){
+  const v = travelerLevels?.[name];
+  const n = parseInt(v, 10);
+  return Number.isFinite(n) && n >= 1 ? Math.min(n, 100) : 1;
+}
+
+// save into localstorage level of travelers.
+function saveTravelerLevel(name, lvl) {
+  const n = Math.max(1, Math.min(100, parseInt(lvl, 10) || 1));
+  travelerLevels[name] = n;
+  saveToLocalStorage('travelerLevels', travelerLevels);
+  return n;
+}
+
+
+function renderTravelerFilterButtons(){
+  const c = document.getElementById('traveler-filter-buttons');
+  if (!c) return;
+  c.innerHTML = '';
+  travelersData.forEach(t => {
+    travelerVisibility[t.name] = travelerVisibility[t.name] ?? true;
+    const b = document.createElement('button');
+    b.textContent = t.name;
+    b.className = `traveler-filter-btn ${travelerVisibility[t.name] ? 'active' : ''}`;
+    b.addEventListener('click', () => {
+      travelerVisibility[t.name] = !travelerVisibility[t.name];
+      saveToLocalStorage('travelerVisibility', travelerVisibility);
+      renderTravelerFilterButtons();
+      filterAndRenderTravelers();
     });
-  }
+    c.appendChild(b);
+  });
+}
 
   function filterAndRenderTravelers(){
     const grid = document.getElementById('travelers-grid');
@@ -490,14 +495,13 @@ document.addEventListener('DOMContentLoaded', () => {
           </div>
           <div class="traveler-level">
             <label>Lvl:</label>
-            <input type="number" min="1" value="${lvl}" class="traveler-level-input" data-traveler="${traveler.name}"/>
+            <input type="number" min="1" max="100" value="${lvl}" class="traveler-level-input" data-traveler="${traveler.name}"/>
           </div>
         </div>
         <div class="tasks-container">${tasksHtml}</div>`;
       grid.appendChild(card);
     });
 
-    // bind once
     if (!grid._bound){
       grid.addEventListener('change', (e)=>{
         if (!e.target.classList.contains('traveler-level-input')) return;
@@ -528,9 +532,11 @@ document.addEventListener('DOMContentLoaded', () => {
   const PH48 = 'https://placehold.co/48x48/2b2b41/e0e0e0?text=IMG';
 
   function renderCraftingTab(){
+    // Re-render craft list, compute requirements and update displays.
     renderCraftList();
-    const { rawRequirements, craftingSteps, inventoryUsage } = calculateCraftingRequirements();
-    renderRequiredResources(rawRequirements);
+    const { rawRange, craftingSteps, inventoryUsage } = calculateCraftingRequirements();
+    // Use rawRange (min/max) for required resources display
+    renderRequiredResources(rawRange);
     renderInventoryUsage(inventoryUsage);
     renderCraftingSteps(craftingSteps);
   }
@@ -574,145 +580,159 @@ document.addEventListener('DOMContentLoaded', () => {
     else if (action === 'decrease') updateCraftQuantity(id, current - 1);
     else if (action === 'remove') updateCraftQuantity(id, 0);
   }
+function renderCraftingSteps(craftingSteps){
+  const c = document.getElementById('craft-steps-list');
+  if (!c) return;
+  c.innerHTML = '';
 
-  function renderCraftingSteps(craftingSteps){
-    const c = document.getElementById('craft-steps-list');
-    if (!c) return;
-    c.innerHTML = '';
-
-    if (!Array.isArray(craftingSteps) || craftingSteps.length === 0){
-      c.innerHTML = '<p>No crafting steps required.</p>';
-      return;
-    }
-
-    // Select handler (once)
-    if (!c._selectBound){
-      c.addEventListener('change', e=>{
-        if (e.target.tagName !== 'SELECT') return;
-        const itemId = e.target.dataset.id;
-        const idx = parseInt(e.target.value, 10);
+  if (!Array.isArray(craftingSteps) || craftingSteps.length === 0){
+    c.innerHTML = '<p>No crafting steps required.</p>';
+    return;
+  }
+  // Bind handlers once: recipe selection and inventory +/- adjustments
+  // These need to be attached outside the per-step loop so they persist across renders.
+  // _selectBound and _invBound ensure we don't attach multiple times on repeated renders.
+  if (!c._selectBound) {
+    c.addEventListener('change', (e) => {
+      const target = e.target;
+      if (target.tagName !== 'SELECT') return;
+      const itemId = target.dataset.id;
+      const idx    = parseInt(target.value, 10);
+      if (!isNaN(idx)) {
         selectedRecipes[itemId] = idx;
         saveToLocalStorage('selectedRecipes', selectedRecipes);
         renderCraftingTab();
-      });
-      c._selectBound = true;
-    }
-    // Inventory adjust handlers (once)
-    if (!c._invBound){
-      /**
-       * Delegate click events for inventory adjustment within crafting steps.
-       * We support both custom classes (.inv-add-btn/.inv-minus-btn) and
-       * generic plus/minus button classes used by the existing theme. Only
-       * buttons under the craft steps list will trigger inventory updates.
-       */
-      c.addEventListener('click', e => {
-        let btn = e.target.closest('button');
-        if (!btn) return;
-        // Ensure this is an adjustment button by checking data-id
-        const id = btn.dataset.id;
-        if (!id) return;
-        const current = inventory[id] || 0;
-        // Determine action: positive if contains inv-add-btn or btn-plus; negative if inv-minus-btn or btn-minus
-        const inc = btn.classList.contains('inv-add-btn') || btn.classList.contains('btn-plus');
-        const dec = btn.classList.contains('inv-minus-btn') || btn.classList.contains('btn-minus');
-        if (!inc && !dec) return;
-        if (inc) {
-          updateInventoryQuantity(id, current + 1);
-          // Show a small info to confirm click
-          showMessage('Added to inventory', 'info');
-        } else if (dec) {
-          updateInventoryQuantity(id, current - 1);
-          showMessage('Removed from inventory', 'info');
-        }
-      });
-      c._invBound = true;
-    }
-
-    craftingSteps.forEach((step, i)=>{
-      const it = craftingData[step.id]; if (!it) return;
-
-      // Calcul du required **par ingrédient** (affiche seulement “required: N”)
-      const ingredientsComputed = (step.ingredients || []).map(ing => {
-        const have = inventory[ing.id] || 0;
-        const need = Math.max(0, Math.ceil(ing.quantityNeeded - have));
-        return { ...ing, need };
-      });
-
-      // 👉 CACHE LA STEP si tous les ingrédients ont need = 0
-      const allOk = ingredientsComputed.every(x => x.need === 0);
-      if (allOk) return;
-
-      // Recipe selector si >1
-      let recipeSelectorHtml = '';
-      if (Array.isArray(it.recipes) && it.recipes.length > 1){
-        const options = it.recipes.map((r, idx)=>{
-          const txt = (r.consumed_items || []).map(ci=>{
-            const ii = craftingData[ci.id]; return ii ? `${ci.quantity}x ${ii.name}` : 'Unknown';
-          }).join(', ');
-          return `<option value="${idx}" ${idx===step.recipeIndex?'selected':''}>Recipe: ${txt}</option>`;
-        }).join('');
-        recipeSelectorHtml = `<div class="recipe-selector"><select data-id="${step.id}">${options}</select></div>`;
       }
-
-      const titleImg = `assets/${it.icon}.png`;
-      const titleHtml = `
-        <div class="step-header">
-          <h4 class="step-title">
-            <img src="${titleImg}" alt="${it.name}" width="24" height="24"
-                 loading="lazy" decoding="async"
-                 style="object-fit:contain;border-radius:6px"
-                 onerror="this.onerror=null;this.src='${PH24}'"/>
-            Step ${i + 1}: Craft ${Math.ceil(step.quantityToCraft)}x ${it.name}
-          </h4>
-        </div>`;
-
-      const ingHtml = ingredientsComputed.map(ing=>{
-        const ingItem = craftingData[ing.id]; if (!ingItem) return `<li>Unknown Item</li>`;
-        const statusClass = ing.need === 0 ? 'green' : 'red';
-        const icon = `assets/${ingItem.icon}.png`;
-        // Build a right-hand block with requirement and +/- buttons to adjust inventory
-        const rightBlock = `<div style="margin-left:auto;display:flex;align-items:center;gap:.25rem;">
-          <span class="step-status ${statusClass}">required: ${ing.need}</span>
-          <button class="btn-round btn-minus inv-minus-btn" data-id="${ing.id}" title="Decrease" style="--btn-size:24px;">−</button>
-          <button class="btn-round btn-plus inv-add-btn" data-id="${ing.id}" title="Increase" style="--btn-size:24px;">+</button>
-        </div>`;
-        return `
-          <li style="display:flex;align-items:center;gap:.5rem;">
-            <img src="${icon}" alt="${ingItem.name}" width="24" height="24"
-                 loading="lazy" decoding="async"
-                 style="object-fit:contain;border-radius:6px"
-                 onerror="this.onerror=null;this.src='${PH24}'"/>
-            <span class="ingredient-name">${ingItem.name}</span>
-            ${rightBlock}
-          </li>`;
-      }).join('');
-
-      const card = document.createElement('div');
-      card.className = 'craft-step-card';
-      card.innerHTML = `${titleHtml}${recipeSelectorHtml}
-        <h5 class="ingredients-title">Used in recipe for this step:</h5>
-        <ul class="step-ingredients-list">${ingHtml}</ul>`;
-      c.appendChild(card);
     });
+    c._selectBound = true;
+  }
+  // Bind click handler for plus/minus buttons to modify inventory.
+  if (!c._invBound) {
+    c.addEventListener('click', (e) => {
+      const btn = e.target.closest('button');
+      if (!btn) return;
+      const id = btn.dataset.id;
+      if (!id) return;
+      const current = inventory[id] || 0;
+      const inc = btn.classList.contains('inv-add-btn') || btn.classList.contains('btn-plus');
+      const dec = btn.classList.contains('inv-minus-btn') || btn.classList.contains('btn-minus');
+      if (inc) updateInventoryQuantity(id, current + 1);
+      else if (dec) updateInventoryQuantity(id, current - 1);
+    });
+    c._invBound = true;
   }
 
-  function renderRequiredResources(rawRequirements){
+
+  const formatRange = (a,b) => (a === b ? `${b}` : `${a}\u2013${b}`); // 3–7
+
+  craftingSteps.forEach((step, i)=>{
+    const it = craftingData[step.id]; if (!it) return;
+
+    // Calculate craftsNeeded based on target quantity
+    const out = Math.max(1, step.outputs?.maxOut || 1);
+    const craftsNeeded = Math.ceil(step.quantityToGet / out);
+
+    // Calculate real needs calculating +- from inventory
+    const ingredientsComputed = (step.ingredients || []).map(ing => {
+      const have = inventory[ing.id] || 0;
+      const minQty = ing.quantityNeededMin !== undefined ? ing.quantityNeededMin : (ing.quantityNeeded || 0);
+      const maxQty = ing.quantityNeededMax !== undefined ? ing.quantityNeededMax : (ing.quantityNeeded || 0);
+      const needMin = Math.max(0, Math.ceil(minQty - have));
+      const needMax = Math.max(0, Math.ceil(maxQty - have));
+      return { ...ing, needMin, needMax };
+    });
+
+    // if inventory have all previous step, so show the next step needed, and hide "completed" steps
+    if (ingredientsComputed.every(x => x.needMax === 0)) return;
+
+    // Select recipe
+    let recipeSelectorHtml = '';
+    const item = craftingData[step.id];
+    if (Array.isArray(item.recipes) && item.recipes.length > 1){
+      const options = item.recipes.map((r, idx)=>{
+        const txt = (r.consumed_items || []).map(ci=>{
+          const ii = craftingData[ci.id]; return ii ? `${ci.quantity}x ${ii.name}` : 'Unknown';
+        }).join(', ');
+        return `<option value="${idx}" ${idx===step.recipeIndex?'selected':''}>Recipe: ${txt}</option>`;
+      }).join('');
+      recipeSelectorHtml = `<div class="recipe-selector"><select data-id="${step.id}">${options}</select></div>`;
+    }
+
+    // Title: "Get X ..." + no x,xx numbers
+    const qtyGet = Math.ceil(step.quantityToGet);
+    const producedMin = Math.ceil(step.quantityProducedMin || 0);
+    const producedMax = Math.ceil(step.quantityProducedMax || 0);
+    const showHint = (producedMin !== qtyGet) || (producedMax !== qtyGet);
+    const hint = showHint
+      ? ` <span style="opacity:.85;font-weight:600">(craft output: ${formatRange(step.outputs.minOut, step.outputs.maxOut)} per craft)</span>`
+      : '';
+
+    const titleImg = `assets/${it.icon}.png`;
+    const titleHtml = `
+      <div class="step-header">
+        <h4 class="step-title">
+          <img src="${titleImg}" alt="${it.name}" width="24" height="24"
+               loading="lazy" decoding="async"
+               style="object-fit:contain;border-radius:6px"
+               onerror="this.onerror=null;this.src='${PH24}'"/>
+          Step ${i + 1}: Get ${qtyGet}x ${it.name}${hint}
+        </h4>
+      </div>`;
+
+    const ingHtml = ingredientsComputed.map(ing=>{
+      const ingItem = craftingData[ing.id]; if (!ingItem) return `<li>Unknown Item</li>`;
+      const icon = `assets/${ingItem.icon}.png`;
+      const requiredMin = Math.ceil(ing.needMin);
+      const requiredMax = Math.ceil(ing.needMax);
+      const display = (requiredMin === requiredMax) ? `${requiredMax}` : `${requiredMin}–${requiredMax}`;
+      const statusClass = (requiredMax === 0) ? 'green' : 'red';
+      return `
+        <li style="display:flex;align-items:center;gap:.5rem;">
+          <img src="${icon}" alt="${ingItem.name}" width="24" height="24"
+               loading="lazy" decoding="async"
+               style="object-fit:contain;border-radius:6px"
+               onerror="this.onerror=null;this.src='${PH24}'"/>
+          <span class="ingredient-name">${ingItem.name}</span>
+          <div style="margin-left:auto;display:flex;align-items:center;gap:.25rem;">
+            <span class="step-status ${statusClass}">required: ${display}</span>
+            <button class="btn-round btn-minus inv-minus-btn" data-id="${ing.id}" title="Decrease" style="--btn-size:24px;">−</button>
+            <button class="btn-round btn-plus inv-add-btn" data-id="${ing.id}" title="Increase" style="--btn-size:24px;">+</button>
+          </div>
+        </li>`;
+    }).join('');
+
+    const card = document.createElement('div');
+    card.className = 'craft-step-card';
+    card.innerHTML = `${titleHtml}${recipeSelectorHtml}
+      <h5 class="ingredients-title">Used in recipe for this step:</h5>
+      <ul class="step-ingredients-list">${ingHtml}</ul>`;
+    c.appendChild(card);
+  });
+}
+
+  function renderRequiredResources(rawRange){
     const c = document.getElementById('global-requirements-list');
     if (!c) return;
     c.innerHTML = '';
-    if (Object.keys(rawRequirements).length === 0){ c.innerHTML = '<p>No raw resources required.</p>'; return; }
-
-    Object.entries(rawRequirements).forEach(([id, needed])=>{
+    if (!rawRange || Object.keys(rawRange).length === 0){
+      c.innerHTML = '<p>No raw resources required.</p>';
+      return;
+    }
+    Object.entries(rawRange).forEach(([id, range]) => {
       const it = craftingData[id]; if (!it) return;
-      // rawRequirements already accounts for inventory usage in calculateCraftingRequirements.
-      // Do not subtract inventory again here. Otherwise adding one item would reduce by two.
-      const required = Math.max(0, Math.ceil(needed));
-      const statusClass = required === 0 ? 'green' : 'red';
+      let minVal, maxVal;
+      if (typeof range === 'number' || range === undefined){
+        minVal = maxVal = Math.max(0, Math.ceil(range || 0));
+      } else {
+        minVal = Math.max(0, Math.ceil(range.min || 0));
+        maxVal = Math.max(0, Math.ceil(range.max || 0));
+      }
+      const txt = (minVal === maxVal) ? `${maxVal}` : `${minVal}–${maxVal}`;
+      const statusClass = (maxVal === 0) ? 'green' : 'red';
       const card = document.createElement('div');
       card.className = 'requirement-card';
-      // Build a right-hand block containing requirement text and +/- buttons to adjust inventory
       const rightBlock = `<div style="margin-left:auto;display:flex;align-items:center;gap:.25rem;">
-        <span class="step-status ${statusClass}" style="padding:.2rem .6rem;border-radius:6px;">required: ${required}</span>
+        <span class="step-status ${statusClass}" style="padding:.2rem .6rem;border-radius:6px;">required: ${txt}</span>
         <button class="btn-round btn-minus req-minus-btn" data-id="${id}" title="Decrease" style="--btn-size:24px;">−</button>
         <button class="btn-round btn-plus req-add-btn" data-id="${id}" title="Increase" style="--btn-size:24px;">+</button>
       </div>`;
@@ -724,7 +744,7 @@ document.addEventListener('DOMContentLoaded', () => {
       c.appendChild(card);
     });
 
-    // Bind click handler once to adjust inventory when clicking +/- in required resources
+    // adjust inventory on button click
     if (!c._reqBound){
       c.addEventListener('click', e => {
         const btn = e.target.closest('button');
@@ -796,11 +816,18 @@ document.addEventListener('DOMContentLoaded', () => {
   //  CORE CALCULATION
   // ==============================
   function calculateCraftingRequirements() {
-    const rawRequirements = {};   // feuilles à collecter (sans recette)
-    const toCraftAggregated = {}; // id -> total à produire (arrondi par maxOut)
-    const inventoryUsage = {};    // id -> combien pris de l’inventaire (global)
+    /**
+     * Calculate the required resources (min/max bounds) and crafting steps while considering the inventory.
+     *
+     * - rawRange : object { id -> { min, max } } for raw resources (after inventory).
+     * - craftingSteps : list of crafting steps with min/max craft and min/max needs for each ingredient.
+     * - inventoryUsage : items consumed directly from the inventory.
+     */
+    const toCraftAggregated = {}; // id -> Quantity to get (Before rounding)
+    const inventoryUsage = {};    // id -> Quantity used from inventory
     const tempInventory = { ...inventory };
 
+    // Expand needs recursively to determine the minimum quantity to obtain for each item
     function expand(itemId, targetQtyMin, visited = new Set()){
       if (visited.has(itemId)) return;
       visited.add(itemId);
@@ -808,60 +835,117 @@ document.addEventListener('DOMContentLoaded', () => {
       const item = craftingData[itemId];
       if (!item) return;
 
-      // consommer inventaire
+      // Consume temporary inventory
       const have = tempInventory[itemId] || 0;
-      const use = Math.min(targetQtyMin, have);
+      const use  = Math.min(targetQtyMin, have);
       if (use > 0){
         inventoryUsage[itemId] = (inventoryUsage[itemId] || 0) + use;
-        tempInventory[itemId] -= use;
-        targetQtyMin -= use;
+        tempInventory[itemId]  -= use;
+        targetQtyMin           -= use;
       }
       if (targetQtyMin <= 0) return;
 
-      // pas de recette -> ressource brute
+      // if the item dont have recipe, it's probably a raw material: we accumulate the minimum required quantity
       if (!item.recipes || item.recipes.length === 0){
-        rawRequirements[itemId] = (rawRequirements[itemId] || 0) + targetQtyMin;
+        // We simply count the minimum need in toCraftAggregated
+        toCraftAggregated[itemId] = (toCraftAggregated[itemId] || 0) + targetQtyMin;
         return;
       }
 
+      // Choose recipe (or first if not defined)
       let recipeIndex = selectedRecipes[itemId] || 0;
       if (recipeIndex >= item.recipes.length) recipeIndex = 0;
       const recipe = item.recipes[recipeIndex];
       if (!recipe) return;
 
+      // Determine the number of crafts needed using the maxOut bound to minimize the number of crafts
       const { minOut, maxOut } = getRecipeOutputs(recipe);
-      const craftsNeeded = Math.ceil(targetQtyMin / Math.max(1, maxOut));
-      const totalProduced = craftsNeeded * Math.max(1, maxOut);
-      toCraftAggregated[itemId] = (toCraftAggregated[itemId] || 0) + totalProduced;
+      const outMax = Math.max(1, maxOut);
+      const craftsNeeded = Math.ceil(targetQtyMin / outMax);
 
+      // Total quantity to obtain (before rounding)
+      toCraftAggregated[itemId] = (toCraftAggregated[itemId] || 0) + targetQtyMin;
+
+      // propagate to ingredients
       for (const ing of recipe.consumed_items || []){
-        const childTargetMin = craftsNeeded * ing.quantity;
-        expand(ing.id, childTargetMin, new Set(visited));
+        const childTarget = craftsNeeded * ing.quantity;
+        expand(ing.id, childTarget, new Set(visited));
       }
     }
 
-    for (const [id, qty] of Object.entries(craftList)) expand(id, qty);
+    // start expansion for each item in craftList
+    for (const [id, qty] of Object.entries(craftList)){
+      expand(id, qty);
+    }
 
-    const craftingSteps = Object.entries(toCraftAggregated).map(([id, qToCraft])=>{
+    // Build crafting steps with min/max bounds
+    const craftingSteps = Object.entries(toCraftAggregated).map(([id, qtyToGet]) => {
       const item = craftingData[id]; if (!item) return null;
       let recipeIndex = selectedRecipes[id] || 0;
-      if (recipeIndex >= item.recipes.length) recipeIndex = 0;
-      const recipe = item.recipes[recipeIndex]; if (!recipe) return null;
-      const { maxOut } = getRecipeOutputs(recipe);
-      const craftsNeeded = Math.ceil(qToCraft / Math.max(1, maxOut));
+      if (recipeIndex >= (item.recipes?.length || 0)) recipeIndex = 0;
+      const recipe = item.recipes?.[recipeIndex]; if (!recipe) return null;
+      const { minOut, maxOut } = getRecipeOutputs(recipe);
+      const outMin = Math.max(1, minOut);
+      const outMax = Math.max(1, maxOut);
+      // craftsMin: we utilize outMax (for lucky people)
+      const craftsMin = Math.ceil(qtyToGet / outMax);
+      // craftsMax: we utilize outMin (for people like me)
+      const craftsMax = Math.ceil(qtyToGet / outMin);
+      const quantityProducedMin = craftsMin * outMin;
+      const quantityProducedMax = craftsMax * outMax;
+      const ingredients = (recipe.consumed_items || []).map(ing => {
+        const qMin = ing.quantity * craftsMin;
+        const qMax = ing.quantity * craftsMax;
+        return {
+          id: ing.id,
+          quantityNeededMin: qMin,
+          quantityNeededMax: qMax
+        };
+      });
       return {
         id,
-        quantityToCraft: qToCraft,
         recipeIndex,
-        ingredients: (recipe.consumed_items || []).map(ing => ({
-          id: ing.id,
-          quantityNeeded: ing.quantity * craftsNeeded
-        }))
+        quantityToGet : qtyToGet,
+        craftsMin,
+        craftsMax,
+        quantityProducedMin,
+        quantityProducedMax,
+        outputs: { minOut: outMin, maxOut: outMax },
+        ingredients
       };
     }).filter(Boolean);
 
-    craftingSteps.sort((a,b)=> getCraftingDepth(a.id) - getCraftingDepth(b.id));
-    return { rawRequirements, craftingSteps, inventoryUsage };
+    // sort by depth (from start to end)
+    craftingSteps.sort((a,b) => getCraftingDepth(a.id) - getCraftingDepth(b.id));
+
+    // Build min/max bounds for raw resources
+    const rawRange = {};
+    // Aggregate from step ingredients
+    craftingSteps.forEach(step => {
+      (step.ingredients || []).forEach(ing => {
+        const itm = craftingData[ing.id];
+        if (!itm || (itm.recipes && itm.recipes.length > 0)) return; // if in data "recipe" have something, so it's not a rawMaterial
+        if (!rawRange[ing.id]) rawRange[ing.id] = { min: 0, max: 0 };
+        rawRange[ing.id].min += ing.quantityNeededMin;
+        rawRange[ing.id].max += ing.quantityNeededMax;
+      });
+    });
+    // add crafted items that don't have a recipe (directly from craftList)
+    Object.entries(craftList).forEach(([id, qty]) => {
+      const item = craftingData[id];
+      if (!item || (item.recipes && item.recipes.length > 0)) return;
+      if (!rawRange[id]) rawRange[id] = { min: 0, max: 0 };
+      rawRange[id].min += qty;
+      rawRange[id].max += qty;
+    });
+    // minus from inventory usage
+    Object.entries(rawRange).forEach(([id, range]) => {
+      const used = inventoryUsage[id] || 0;
+      range.min = Math.max(0, Math.ceil(range.min - used));
+      range.max = Math.max(0, Math.ceil(range.max - used));
+    });
+
+    return { rawRange, craftingSteps, inventoryUsage };
   }
 
   function getCraftingDepth(itemId, path = new Set()){
@@ -961,6 +1045,10 @@ document.addEventListener('DOMContentLoaded', () => {
   // ==============================
   //  SHARE (modal in-site)
   // ==============================
+
+  // The entire code for sharing and import is coded entirely by AI, and while I don't fully understand it, I trust its functionality. AI made some comments for me to improve my understanding.
+  // but I need to learn more about it. So i kept her comments.
+  
   function wireShareModal(){
     const modal = document.getElementById('share-modal');
     if (!modal) return;
@@ -983,7 +1071,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Show decoded contents of the share payload when the user clicks "View Data". This
     // decodes the Base64 in the share-code input, then renders a list of items and
     // quantities for either craft lists or inventories. If the view is currently
-    // visible, clicking again hides it.
+    // visible, clicking again hides it. Of course, this entire part is done by GPT, cause he explained me how this work, but impossible for me to understand.
     if (viewBtn && dataView) {
       viewBtn.onclick = () => {
         const code = codeInput.value.trim();
