@@ -1,8 +1,8 @@
-# The Bitcrafters' Forge
+# About this project
 
-A community tool for **Bitcraft Online** that helps you plan, share, and organize crafting and inventory in-game.  
-Runs directly in your browser, stores data locally, and allows easy sharing via links.
+This is a website written in the most simplistic way: HTML/CSS/JS. It's a tool used to plan crafts for the game "Bitcraft Online." This site is made by a fan, in other words, a player.
 
+Read the license. This site is publicly available. It's intended to help me code better, as I'm a beginner. I learn by myself ( friends and internet help me for this), just to say, coding is not my primary job, so the code here can be possibly weird.
 ---
 
 ## 📦 Features
